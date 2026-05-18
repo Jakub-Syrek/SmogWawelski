@@ -8,7 +8,7 @@ namespace SmogWawelski;
 public partial class MainPage : ContentPage
 {
     private readonly MapViewModel     _vm       = new();
-    private readonly GtfsShapeService _shapeSvc = new();
+    private readonly GtfsShapeService _shapeSvc = new(FileSystem.AppDataDirectory);
     private bool _mapReady;
     private bool _routesDrawn;
 

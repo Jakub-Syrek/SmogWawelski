@@ -47,11 +47,19 @@
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 	</PropertyGroup>
 
-	<!-- Wyklucz podfolder SmogWawelski.Web z kompilacji MAUI -->
+	<!-- Wyklucz podfoldery z kompilacji MAUI -->
 	<ItemGroup>
 		<Compile Remove="SmogWawelski.Web\**"/>
 		<Content Remove="SmogWawelski.Web\**"/>
-		<None   Remove="SmogWawelski.Web\**"/>
+		<None    Remove="SmogWawelski.Web\**"/>
+		<Compile Remove="SmogWawelski.Core\**"/>
+		<Content Remove="SmogWawelski.Core\**"/>
+		<None    Remove="SmogWawelski.Core\**"/>
+		<Compile Remove="SmogWawelski.Tests\**"/>
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="SmogWawelski.Core\SmogWawelski.Core.csproj"/>
 	</ItemGroup>
 
 	<ItemGroup>
