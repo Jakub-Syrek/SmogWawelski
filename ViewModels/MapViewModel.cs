@@ -2,8 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using SmogWawelski.Models;
-using SmogWawelski.Services;
+using SmogWawelski.Core;
 
 namespace SmogWawelski.ViewModels;
 

@@ -1,16 +1,20 @@
 using System.Text.Json;
-using SmogWawelski.Models;
+using SmogWawelski.Core;
 using SmogWawelski.Services;
 using SmogWawelski.ViewModels;
+using GtfsShapeService = SmogWawelski.Core.GtfsShapeService;
 
 namespace SmogWawelski;
 
 public partial class MainPage : ContentPage
 {
-    private readonly MapViewModel     _vm       = new();
-    private readonly GtfsShapeService _shapeSvc = new(FileSystem.AppDataDirectory);
+    private readonly MapViewModel       _vm         = new();
+    private readonly GtfsShapeService   _shapeSvc   = new(FileSystem.AppDataDirectory);
+    private readonly ScreenCaptureService _capture  = new();
     private bool _mapReady;
     private bool _routesDrawn;
+    private int  _recordSeconds;
+    private IDispatcherTimer? _recordClock;
 
     public MainPage()
     {
@@ -24,20 +28,14 @@ public partial class MainPage : ContentPage
             MainThread.BeginInvokeOnMainThread(() =>
             {
                 if (e.PropertyName == nameof(_vm.Status))
-                {
                     StatusLabel.Text = _vm.Status;
-                }
                 if (e.PropertyName == nameof(_vm.IsLoading))
-                {
                     Spinner.IsRunning = _vm.IsLoading;
-                    RefreshBtn.Rotation = _vm.IsLoading ? 0 : 0;
-                }
                 if (e.PropertyName == nameof(_vm.TramCount))
                 {
                     CountLabel.Text = _vm.TramCount.ToString();
-                    // Animacja badge gdy liczba się zmienia
-                    _ = CountBadge.ScaleToAsync(1.3, 120).ContinueWith(_ =>
-                        CountBadge.ScaleToAsync(1.0, 120));
+                    _ = CountBadge.ScaleToAsync(1.3, 120)
+                                  .ContinueWith(_ => CountBadge.ScaleToAsync(1.0, 120));
                 }
             });
         };
@@ -56,7 +54,7 @@ public partial class MainPage : ContentPage
         _vm.StopAutoRefresh();
     }
 
-    // ── Mapa ────────────────────────────────────────────────────────────────
+    // ── Mapa ─────────────────────────────────────────────────────
 
     private void LoadMap()
     {
@@ -78,7 +76,7 @@ public partial class MainPage : ContentPage
         }
         catch (Exception ex)
         {
-            return $"<html><body style='background:#0d1117;color:white;padding:20px'>Błąd mapy: {ex.Message}</body></html>";
+            return $"<html><body style='background:#0d1117;color:white;padding:20px'>Błąd: {ex.Message}</body></html>";
         }
     }
 
@@ -89,55 +87,44 @@ public partial class MainPage : ContentPage
         {
             var routes = await _shapeSvc.GetRoutesAsync();
             if (routes.Count == 0) return;
-
             var json    = JsonSerializer.Serialize(routes);
             var escaped = json.Replace("\\","\\\\").Replace("'","\\'").Replace("\n","").Replace("\r","");
             await MainThread.InvokeOnMainThreadAsync(async () =>
             {
-                try
-                {
-                    await MapView.EvaluateJavaScriptAsync($"drawRoutes('{escaped}');");
-                    _routesDrawn = true;
-                    Console.WriteLine($"[Map] Narysowano {routes.Count} tras");
-                }
-                catch (Exception ex) { Console.WriteLine($"[Map] drawRoutes błąd: {ex.Message}"); }
+                try   { await MapView.EvaluateJavaScriptAsync($"drawRoutes('{escaped}');"); _routesDrawn = true; }
+                catch { }
             });
         }
-        catch (Exception ex) { Console.WriteLine($"[Map] LoadRoutes błąd: {ex.Message}"); }
+        catch { }
     }
 
     private async Task PushVehiclesToMapAsync(List<TtssVehicle> vehicles)
     {
         if (!_mapReady) return;
-
         var payload = JsonSerializer.Serialize(vehicles.Select(v => new
-        {
-            v.Id, v.Name, v.Lat, v.Lng, v.Color, Heading = v.Heading
-        }));
-
-        // Bezpieczne przekazanie do JS przez JSON.parse zamiast inline string
-        var jsonEscaped = payload
-            .Replace("\\", "\\\\")
-            .Replace("'", "\\'")
-            .Replace("\n", "")
-            .Replace("\r", "");
-
-        var js = $"updateVehicles('{jsonEscaped}');";
-
+            { v.Id, v.Name, v.Lat, v.Lng, v.Color, Heading = v.Heading }));
+        var escaped = payload.Replace("\\","\\\\").Replace("'","\\'").Replace("\n","").Replace("\r","");
         await MainThread.InvokeOnMainThreadAsync(async () =>
         {
-            try { await MapView.EvaluateJavaScriptAsync(js); }
-            catch { /* mapa jeszcze się ładuje */ }
+            try { await MapView.EvaluateJavaScriptAsync($"updateVehicles('{escaped}');"); }
+            catch { }
         });
     }
 
-    // ── Eventy ──────────────────────────────────────────────────────────────
+    // ── Eventy — UI ──────────────────────────────────────────────
 
     private void OnRefreshClicked(object? sender, EventArgs e)
     {
-        _ = RefreshBtn.RotateToAsync(360, 400).ContinueWith(_ =>
-            MainThread.BeginInvokeOnMainThread(() => RefreshBtn.Rotation = 0));
+        _ = RefreshBtn.RotateToAsync(360, 400)
+                      .ContinueWith(_ => MainThread.BeginInvokeOnMainThread(() => RefreshBtn.Rotation = 0));
         _ = _vm.RefreshAsync();
+    }
+
+    private void OnFilterTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        var hasFilter = !string.IsNullOrWhiteSpace(e.NewTextValue);
+        ClearFilterBtn.IsVisible = hasFilter;
+        if (!hasFilter) _vm.FilterLine = "";
     }
 
     private void OnFilterChanged(object? sender, EventArgs e)
@@ -145,27 +132,89 @@ public partial class MainPage : ContentPage
 
     private void OnClearFilter(object? sender, EventArgs e)
     {
-        FilterEntry.Text = "";
-        _vm.FilterLine = "";
+        FilterEntry.Text    = "";
+        ClearFilterBtn.IsVisible = false;
+        _vm.FilterLine      = "";
     }
 
     private async void OnLineSelected(object? sender, SelectionChangedEventArgs e)
     {
         if (e.CurrentSelection.FirstOrDefault() is not TramRow row) return;
-        _vm.FilterLine = row.Line;
-        FilterEntry.Text = row.Line;
+        _vm.FilterLine            = row.Line;
+        FilterEntry.Text          = row.Line;
+        ClearFilterBtn.IsVisible  = true;
         ((CollectionView)sender!).SelectedItem = null;
 
         await Task.Delay(400);
         if (!_mapReady || _vm.LastVehicles.Count == 0) return;
-
-        var pts = JsonSerializer.Serialize(
-            _vm.LastVehicles.Select(v => new { v.Lat, v.Lng }));
+        var pts     = JsonSerializer.Serialize(_vm.LastVehicles.Select(v => new { v.Lat, v.Lng }));
         var escaped = pts.Replace("\\","\\\\").Replace("'","\\'");
         await MainThread.InvokeOnMainThreadAsync(async () =>
         {
             try { await MapView.EvaluateJavaScriptAsync($"focusVehicles('{escaped}');"); }
             catch { }
         });
+    }
+
+    // ── Screenshot ───────────────────────────────────────────────
+
+    private async void OnScreenshotClicked(object? sender, EventArgs e)
+    {
+        var path = await _capture.TakeScreenshotAsync();
+        if (path == null) { await DisplayAlert("Błąd", "Nie udało się zrobić zrzutu", "OK"); return; }
+        await ScreenCaptureService.ShareFileAsync(path, "MPK Kraków — zrzut ekranu");
+    }
+
+    // ── Recording ────────────────────────────────────────────────
+
+    private async void OnRecordClicked(object? sender, EventArgs e)
+    {
+        if (_capture.IsRecording)
+            await StopRecordingAsync();
+        else
+            StartRecording();
+    }
+
+    private void StartRecording()
+    {
+        _recordSeconds = 0;
+        _capture.StartRecording(Dispatcher);
+
+        // Pulsujący czerwony przycisk
+        RecordBtn.Text             = "⏹";
+        RecordBorder.BackgroundColor = Color.FromRgb(100, 0, 0);
+        RecordingIndicator.IsVisible = true;
+
+        // Zegar sekundowy
+        _recordClock          = Dispatcher.CreateTimer();
+        _recordClock.Interval = TimeSpan.FromSeconds(1);
+        _recordClock.Tick    += (_, _) =>
+        {
+            _recordSeconds++;
+            RecordingLabel.Text = $"REC {_recordSeconds}s";
+            // Auto-stop po 30 sekundach
+            if (_recordSeconds >= 30)
+                MainThread.BeginInvokeOnMainThread(async () => await StopRecordingAsync());
+        };
+        _recordClock.Start();
+    }
+
+    private async Task StopRecordingAsync()
+    {
+        _recordClock?.Stop();
+        RecordBtn.Text               = "⏺";
+        RecordBorder.BackgroundColor = Color.FromRgb(33, 38, 45);
+        RecordingIndicator.IsVisible = false;
+        RecordingLabel.Text          = "REC 0s";
+
+        StatusLabel.Text = "Przygotowuję klatki…";
+        var frames = await _capture.StopAndGetFramesAsync();
+
+        if (frames.Count >= 2)
+            await ScreenCaptureService.ShareFramesAsync(frames, $"MPK Kraków — {frames.Count} klatek");
+        else
+            await DisplayAlert("Info", "Za mało klatek — nagraj dłużej niż 2 sekundy", "OK");
+
+        StatusLabel.Text = _vm.Status;
     }
 }

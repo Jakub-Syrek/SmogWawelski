@@ -49,17 +49,17 @@
 
 	<!-- Wyklucz podfoldery z kompilacji MAUI -->
 	<ItemGroup>
-		<Compile Remove="SmogWawelski.Web\**"/>
-		<Content Remove="SmogWawelski.Web\**"/>
-		<None    Remove="SmogWawelski.Web\**"/>
-		<Compile Remove="SmogWawelski.Core\**"/>
-		<Content Remove="SmogWawelski.Core\**"/>
-		<None    Remove="SmogWawelski.Core\**"/>
-		<Compile Remove="SmogWawelski.Tests\**"/>
+		<Compile Remove="SmogWawelski.Web\**" />
+		<Content Remove="SmogWawelski.Web\**" />
+		<None Remove="SmogWawelski.Web\**" />
+		<Compile Remove="SmogWawelski.Core\**" />
+		<Content Remove="SmogWawelski.Core\**" />
+		<None Remove="SmogWawelski.Core\**" />
+		<Compile Remove="SmogWawelski.Tests\**" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="SmogWawelski.Core\SmogWawelski.Core.csproj"/>
+		<ProjectReference Include="SmogWawelski.Core\SmogWawelski.Core.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

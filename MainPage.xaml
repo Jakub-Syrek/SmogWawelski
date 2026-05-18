@@ -52,14 +52,64 @@
             </HorizontalStackLayout>
         </Grid>
 
-        <!-- ── MAPA ── -->
-        <WebView x:Name="MapView" Grid.Row="1"/>
+        <!-- ── MAPA + FAB przyciski ── -->
+        <Grid Grid.Row="1">
+            <WebView x:Name="MapView"/>
+
+            <!-- FAB: screenshot + record (prawy dolny róg) -->
+            <VerticalStackLayout HorizontalOptions="End" VerticalOptions="End"
+                                 Margin="14,0,14,14" Spacing="10">
+
+                <!-- Nagrywanie -->
+                <Border x:Name="RecordBorder"
+                        BackgroundColor="#21262d"
+                        StrokeShape="RoundRectangle 28"
+                        Stroke="#30363d" WidthRequest="52" HeightRequest="52">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Opacity="0.5" Radius="8" Offset="0,3"/>
+                    </Border.Shadow>
+                    <Button x:Name="RecordBtn" Text="⏺"
+                            BackgroundColor="Transparent"
+                            TextColor="#e94560"
+                            FontSize="20" Padding="0"
+                            Clicked="OnRecordClicked"/>
+                </Border>
+
+                <!-- Screenshot -->
+                <Border BackgroundColor="#21262d"
+                        StrokeShape="RoundRectangle 28"
+                        Stroke="#30363d" WidthRequest="52" HeightRequest="52">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Opacity="0.5" Radius="8" Offset="0,3"/>
+                    </Border.Shadow>
+                    <Button Text="📷"
+                            BackgroundColor="Transparent"
+                            TextColor="White"
+                            FontSize="20" Padding="0"
+                            Clicked="OnScreenshotClicked"/>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- Wskaźnik nagrywania (lewy górny) -->
+            <HorizontalStackLayout x:Name="RecordingIndicator"
+                                   IsVisible="False"
+                                   HorizontalOptions="Start" VerticalOptions="Start"
+                                   Margin="12" Spacing="6"
+                                   BackgroundColor="#cc000000">
+                <Border BackgroundColor="#e94560" WidthRequest="10" HeightRequest="10"
+                        StrokeShape="RoundRectangle 5" Stroke="Transparent"
+                        VerticalOptions="Center"/>
+                <Label x:Name="RecordingLabel" Text="REC 0s"
+                       TextColor="White" FontSize="12" FontAttributes="Bold"
+                       VerticalOptions="Center"/>
+            </HorizontalStackLayout>
+        </Grid>
 
         <!-- ── FILTR ── -->
         <Grid Grid.Row="2" Padding="10,4" BackgroundColor="#0d1117">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="36"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <Border Grid.Column="0" BackgroundColor="#161b22"
                     StrokeShape="RoundRectangle 8"
@@ -68,11 +118,16 @@
                        Placeholder="Szukaj linii… (np. 4, 22)"
                        PlaceholderColor="#484f58" TextColor="#e6edf3"
                        BackgroundColor="Transparent"
-                       ReturnType="Search" Completed="OnFilterChanged"/>
+                       ReturnType="Search" Completed="OnFilterChanged"
+                       TextChanged="OnFilterTextChanged"/>
             </Border>
-            <Button Grid.Column="1" Text="✕"
-                    BackgroundColor="Transparent" TextColor="#484f58"
-                    FontSize="16" Clicked="OnClearFilter" Padding="0"/>
+            <!-- Przycisk wyczyść — widoczny tylko gdy jest filtr -->
+            <Button x:Name="ClearFilterBtn" Grid.Column="1" Text="✕ wyczyść"
+                    BackgroundColor="#e94560" TextColor="White"
+                    FontSize="12" CornerRadius="8"
+                    Padding="10,0" Margin="6,0,0,0" HeightRequest="36"
+                    IsVisible="False"
+                    Clicked="OnClearFilter"/>
         </Grid>
 
         <!-- ── LINIE (poziomy scroll) ── -->

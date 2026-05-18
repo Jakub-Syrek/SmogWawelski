@@ -1,9 +1,12 @@
 # 🚋 SmogWawelski — MPK Kraków Live Tracker
 
-![CI](https://github.com/Jakub-Syrek/SmogWawelski/actions/workflows/ci.yml/badge.svg)
-![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen)
-![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-blue)
-![.NET](https://img.shields.io/badge/.NET-10.0-purple)
+[![CI](https://github.com/Jakub-Syrek/SmogWawelski/actions/workflows/ci.yml/badge.svg)](https://github.com/Jakub-Syrek/SmogWawelski/actions/workflows/ci.yml)
+[![Release](https://github.com/Jakub-Syrek/SmogWawelski/actions/workflows/release.yml/badge.svg)](https://github.com/Jakub-Syrek/SmogWawelski/actions/workflows/release.yml)
+[![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen?logo=checkmarx)](https://github.com/Jakub-Syrek/SmogWawelski/tree/main/SmogWawelski.Tests)
+[![.NET](https://img.shields.io/badge/.NET-10.0-blueviolet?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Windows-0078d4?logo=android)](https://github.com/Jakub-Syrek/SmogWawelski/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![GTFS-RT](https://img.shields.io/badge/data-ZTP%20Kraków%20GTFS--RT-orange?logo=googlemaps)](https://gtfs.ztp.krakow.pl)
 
 Real-time tram tracker for Kraków (MPK) built with **.NET MAUI**. Shows live positions of all trams on a dark interactive map with smooth animations, comet trails, and the full tram network drawn from GTFS data.
 
