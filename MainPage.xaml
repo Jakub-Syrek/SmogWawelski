@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SmogWawelski.MainPage"
+             Title="Tramwaje Kraków"
+             BackgroundColor="#0d1117">
+
+    <Grid RowDefinitions="64,*,44,140">
+
+        <!-- ── HEADER ── -->
+        <Grid Grid.Row="0" Padding="14,0">
+            <Grid.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                    <GradientStop Color="#0d1117" Offset="0"/>
+                    <GradientStop Color="#161b22" Offset="1"/>
+                </LinearGradientBrush>
+            </Grid.Background>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Lewa: tytuł + status -->
+            <VerticalStackLayout Grid.Column="0" VerticalOptions="Center" Spacing="2">
+                <HorizontalStackLayout Spacing="8">
+                    <Label Text="🚋" FontSize="20" VerticalOptions="Center"/>
+                    <Label Text="MPK Kraków" FontSize="18" FontAttributes="Bold"
+                           TextColor="#58a6ff" VerticalOptions="Center"/>
+                    <!-- Badge z liczbą tramwajów -->
+                    <Border x:Name="CountBadge" BackgroundColor="#e94560"
+                            StrokeShape="RoundRectangle 10" Stroke="Transparent"
+                            Padding="7,2" VerticalOptions="Center">
+                        <Label x:Name="CountLabel" Text="0" FontSize="11"
+                               FontAttributes="Bold" TextColor="White"/>
+                    </Border>
+                </HorizontalStackLayout>
+                <Label x:Name="StatusLabel" Text="Łączenie..."
+                       FontSize="11" TextColor="#484f58"/>
+            </VerticalStackLayout>
+
+            <!-- Prawa: spinner + refresh -->
+            <HorizontalStackLayout Grid.Column="1" Spacing="10" VerticalOptions="Center">
+                <ActivityIndicator x:Name="Spinner" IsRunning="False"
+                                   Color="#58a6ff" WidthRequest="18" HeightRequest="18"/>
+                <Button x:Name="RefreshBtn" Text="⟳"
+                        BackgroundColor="#21262d"
+                        TextColor="#58a6ff"
+                        BorderColor="#30363d" BorderWidth="1"
+                        CornerRadius="22" WidthRequest="44" HeightRequest="44"
+                        Padding="0" FontSize="20"
+                        Clicked="OnRefreshClicked"/>
+            </HorizontalStackLayout>
+        </Grid>
+
+        <!-- ── MAPA ── -->
+        <WebView x:Name="MapView" Grid.Row="1"/>
+
+        <!-- ── FILTR ── -->
+        <Grid Grid.Row="2" Padding="10,4" BackgroundColor="#0d1117">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="36"/>
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" BackgroundColor="#161b22"
+                    StrokeShape="RoundRectangle 8"
+                    Stroke="#30363d" Padding="10,0">
+                <Entry x:Name="FilterEntry"
+                       Placeholder="Szukaj linii… (np. 4, 22)"
+                       PlaceholderColor="#484f58" TextColor="#e6edf3"
+                       BackgroundColor="Transparent"
+                       ReturnType="Search" Completed="OnFilterChanged"/>
+            </Border>
+            <Button Grid.Column="1" Text="✕"
+                    BackgroundColor="Transparent" TextColor="#484f58"
+                    FontSize="16" Clicked="OnClearFilter" Padding="0"/>
+        </Grid>
+
+        <!-- ── LINIE (poziomy scroll) ── -->
+        <CollectionView x:Name="LinesList" Grid.Row="3"
+                        BackgroundColor="#0d1117"
+                        SelectionMode="Single"
+                        SelectionChanged="OnLineSelected">
+            <CollectionView.ItemsLayout>
+                <LinearItemsLayout Orientation="Horizontal" ItemSpacing="6"/>
+            </CollectionView.ItemsLayout>
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="4,10,4,4" WidthRequest="62">
+                        <Border StrokeShape="RoundRectangle 12"
+                                Stroke="Transparent"
+                                Padding="0">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="{Binding Color}" Offset="0"/>
+                                    <GradientStop Color="{Binding ColorDark}" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <VerticalStackLayout HorizontalOptions="Center"
+                                                 Padding="6,8" Spacing="2">
+                                <Label Text="{Binding Line}"
+                                       FontSize="17" FontAttributes="Bold"
+                                       TextColor="White"
+                                       HorizontalOptions="Center"/>
+                                <Label Text="{Binding Badge}"
+                                       FontSize="10" TextColor="#ffffffaa"
+                                       HorizontalOptions="Center"/>
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+    </Grid>
+</ContentPage>

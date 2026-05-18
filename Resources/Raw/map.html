@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { height:100%; background:#0d1117; overflow:hidden; }
+#map { width:100%; height:100%; }
+
+/* ── Tram marker ────────────────────────────────────────────── */
+.tm {
+  position:relative;
+  will-change:transform;
+}
+.tm-glow {
+  position:absolute; inset:-8px;
+  border-radius:50%;
+  background:radial-gradient(circle, color-mix(in srgb,var(--c) 50%,transparent) 0%, transparent 70%);
+  animation:glowPulse 2s ease-in-out infinite;
+  pointer-events:none;
+}
+.tm-halo {
+  position:absolute; inset:-3px;
+  border-radius:12px;
+  border:1.5px solid color-mix(in srgb,var(--c) 70%,transparent);
+  animation:haloPulse 2s ease-in-out infinite;
+  pointer-events:none;
+}
+.tm-body {
+  position:absolute; inset:0;
+  border-radius:10px;
+  background:var(--c);
+  border:2.5px solid rgba(255,255,255,0.9);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.5),
+    0 4px 14px rgba(0,0,0,.8),
+    0 0 20px color-mix(in srgb,var(--c) 60%,transparent),
+    inset 0 1px 0 rgba(255,255,255,.25);
+  overflow:hidden;
+}
+.tm-shine {
+  position:absolute; top:0; left:0; right:0; height:45%;
+  background:linear-gradient(180deg,rgba(255,255,255,.22) 0%,transparent 100%);
+  border-radius:8px 8px 0 0;
+}
+.tm-line {
+  color:#fff;
+  font-family:'Arial Black',Arial,sans-serif;
+  font-weight:900;
+  line-height:1;
+  text-shadow:0 1px 4px rgba(0,0,0,.7);
+  position:relative; z-index:1;
+}
+.tm-bar {
+  position:absolute; bottom:0; left:0; right:0; height:3px;
+  background:rgba(255,255,255,.5);
+  border-radius:0 0 8px 8px;
+  overflow:hidden;
+}
+.tm-bar::after {
+  content:'';display:block;height:100%;
+  background:rgba(255,255,255,.9);
+  animation:speedBar 1.6s ease-in-out infinite;
+}
+.tm-arrow {
+  position:absolute; top:-12px; left:50%;
+  transform:translateX(-50%);
+  width:0;height:0;
+  border-left:5px solid transparent;
+  border-right:5px solid transparent;
+  border-bottom:10px solid var(--c);
+  filter:drop-shadow(0 0 4px var(--c)) drop-shadow(0 0 2px #fff);
+}
+.tm.stopped .tm-glow,.tm.stopped .tm-bar { display:none; }
+.tm.stopped .tm-body { opacity:.75; }
+.tm.stopped .tm-arrow { opacity:.4; }
+.tm-enter { animation:popIn .4s cubic-bezier(.34,1.56,.64,1) forwards; }
+
+@keyframes glowPulse  { 0%,100%{opacity:.45;transform:scale(1)}  50%{opacity:.85;transform:scale(1.2)} }
+@keyframes haloPulse  { 0%,100%{opacity:.3;transform:scale(1)}   50%{opacity:.7;transform:scale(1.1)} }
+@keyframes speedBar   { 0%{width:15%} 50%{width:88%} 100%{width:15%} }
+@keyframes popIn      { from{transform:scale(0) translateY(10px);opacity:0} to{transform:scale(1) translateY(0);opacity:1} }
+
+/* ── Trail SVG animations (injected into Leaflet SVG) ─────── */
+@keyframes trailDash  { to { stroke-dashoffset:-24; } }
+@keyframes trailDash2 { to { stroke-dashoffset:-16; } }
+
+/* ── Popup ──────────────────────────────────────────────────── */
+.leaflet-popup-content-wrapper {
+  background:#161b22; border:1px solid #30363d;
+  border-radius:12px; color:#e6edf3;
+  font-family:system-ui,sans-serif; font-size:13px;
+  box-shadow:0 8px 32px rgba(0,0,0,.7);
+}
+.leaflet-popup-tip { background:#161b22; }
+.popup-title { font-size:22px; font-weight:900; display:flex; align-items:center; gap:8px; }
+.popup-chip  { padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; color:#fff; }
+.popup-info  { margin-top:6px; color:#8b949e; font-size:11px; line-height:1.8; }
+
+/* ── Controls ───────────────────────────────────────────────── */
+.leaflet-control-zoom a { background:#161b22!important; color:#e6edf3!important; border-color:#30363d!important; }
+.leaflet-control-zoom a:hover { background:#21262d!important; }
+.leaflet-control-attribution { background:rgba(13,17,23,.7)!important; color:#484f58!important; font-size:9px!important; }
+.leaflet-control-attribution a { color:#58a6ff!important; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+// ── Map ────────────────────────────────────────────────────────
+var map = L.map('map', {
+  zoomControl:true, preferCanvas:false,  // SVG renderer dla animacji trail
+  zoomAnimation:true, fadeAnimation:true
+}).setView([50.0614,19.9366],13);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© OSM © CARTO', subdomains:'abcd', maxZoom:19
+}).addTo(map);
+
+// Wstrzyknij CSS animacji do SVG Leaflet po załadowaniu
+map.on('layeradd', injectSvgCSS);
+function injectSvgCSS() {
+  var svg = document.querySelector('.leaflet-overlay-pane svg');
+  if (!svg || document.getElementById('_tram_anim')) return;
+  var s = document.createElementNS('http://www.w3.org/2000/svg','style');
+  s.id = '_tram_anim';
+  s.textContent =
+    '@keyframes td1{to{stroke-dashoffset:-24}}' +
+    '@keyframes td2{to{stroke-dashoffset:-16}}' +
+    '.tr-core{animation:td1 .45s linear infinite}' +
+    '.tr-mid {animation:td2 .9s linear infinite}';
+  svg.insertBefore(s, svg.firstChild);
+}
+
+// ── State ──────────────────────────────────────────────────────
+var vehicles  = {};   // id → data
+var markers   = {};   // id → L.Marker
+var curPos    = {};   // id → {lat,lng,bear}
+var tgtPos    = {};   // id → {lat,lng,bear}
+var posHist   = {};   // id → [{lat,lng}]  ostatnie 14 punktów
+var trailLyrs = {};   // id → [L.Polyline × 4]
+var prevPt    = {};   // id → {lat,lng}  dla detekcji ruchu
+
+var MAX_HIST = 10;  // tylko ostatnie 10 pkt — ogon nie za długi
+var cvs = L.canvas({ padding: 0.5 }); // Canvas renderer dla efektywności
+
+// ── Trail — efekt komety ───────────────────────────────────────
+// Każdy segment ma własną opacity: 0→1 od ogona do głowy
+function upsertTrail(id, pts, color) {
+  removeTrail(id);
+  if (pts.length < 2) return;
+
+  var layers = [];
+  var n = pts.length;
+
+  for (var i = 1; i < n; i++) {
+    var t = i / (n - 1);          // 0.0 = ogon (stary), 1.0 = głowa (nowy)
+    var seg = [[pts[i-1].lat, pts[i-1].lng], [pts[i].lat, pts[i].lng]];
+    var isHead = (i === n - 1);   // ostatni segment
+
+    // Warstwa 1: szerokie glow
+    layers.push(L.polyline(seg, {
+      renderer: cvs, color: color,
+      weight: 10, opacity: t * 0.10,
+      lineCap: 'round', interactive: false
+    }).addTo(map));
+
+    // Warstwa 2: core
+    layers.push(L.polyline(seg, {
+      renderer: cvs, color: color,
+      weight: isHead ? 3 : 2,
+      opacity: t * 0.75 + 0.05,
+      dashArray: isHead ? '7 4' : null,
+      lineCap: 'round', interactive: false
+    }).addTo(map));
+
+    // Warstwa 3: biały highlight tylko na najnowszych segmentach
+    if (t > 0.55) {
+      layers.push(L.polyline(seg, {
+        renderer: cvs, color: '#ffffff',
+        weight: 1, opacity: (t - 0.55) * 0.8,
+        lineCap: 'round', interactive: false
+      }).addTo(map));
+    }
+  }
+
+  // Animowany dash na ostatnim segmencie (SVG head)
+  if (n >= 2) {
+    var headSeg = [[pts[n-2].lat, pts[n-2].lng], [pts[n-1].lat, pts[n-1].lng]];
+    var headLine = L.polyline(headSeg, {
+      color: color, weight: 2, opacity: 0.9,
+      dashArray: '8 5', lineCap: 'round', interactive: false
+    }).addTo(map);
+    function addAnim(poly) {
+      var el = poly.getElement ? poly.getElement() : null;
+      if (el) el.classList.add('tr-core');
+      else poly.on('add', function(){ var e=this.getElement(); if(e) e.classList.add('tr-core'); });
+    }
+    addAnim(headLine);
+    layers.push(headLine);
+    injectSvgCSS();
+  }
+
+  trailLyrs[id] = layers;
+}
+
+function removeTrail(id) {
+  if (!trailLyrs[id]) return;
+  trailLyrs[id].forEach(function(l){ map.removeLayer(l); });
+  delete trailLyrs[id];
+}
+
+// ── Marker icon ────────────────────────────────────────────────
+function makeIcon(v, enter) {
+  var sz = v.line.length > 2 ? 40 : 38;
+  var fs = v.line.length > 2 ? 10 : 13;
+  var cls = 'tm' + (enter ? ' tm-enter' : '') + (v.stopped ? ' stopped' : '');
+  return L.divIcon({
+    className:'',
+    html:'<div class="'+cls+'" style="--c:'+v.color+';width:'+sz+'px;height:'+sz+'px">'+
+         '<div class="tm-glow"></div>'+
+         '<div class="tm-halo"></div>'+
+         '<div class="tm-arrow" style="border-bottom-color:'+v.color+';transform:translateX(-50%) rotate('+(v.bearing||0)+'deg)"></div>'+
+         '<div class="tm-body">'+
+           '<div class="tm-shine"></div>'+
+           '<span class="tm-line" style="font-size:'+fs+'px">'+v.line+'</span>'+
+           '<div class="tm-bar"></div>'+
+         '</div>'+
+         '</div>',
+    iconSize:[sz,sz], iconAnchor:[sz/2,sz/2], popupAnchor:[0,-sz/2-8]
+  });
+}
+
+function makePopup(v) {
+  return '<div class="popup-title">'+v.line+
+         '<span class="popup-chip" style="background:'+v.color+'">🚋 linia</span></div>'+
+         '<div class="popup-info">'+
+         '📍 '+v.lat.toFixed(5)+', '+v.lng.toFixed(5)+'<br>'+
+         '🧭 '+Math.round(v.bearing||0)+'° &nbsp;|&nbsp; ID: '+v.id+
+         '</div>';
+}
+
+// ── Animation loop ─────────────────────────────────────────────
+var EASE = 0.10;
+function lerpA(a,b,t){ var d=((b-a+540)%360)-180; return a+d*t; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+function animLoop(){
+  for (var id in tgtPos) {
+    if (!markers[id]||!curPos[id]) continue;
+    var c=curPos[id], tg=tgtPos[id];
+    var dl=Math.abs(tg.lat-c.lat), dn=Math.abs(tg.lng-c.lng);
+    if (dl<1e-8&&dn<1e-8) continue;
+    c.lat   = lerp(c.lat,  tg.lat,   EASE);
+    c.lng   = lerp(c.lng,  tg.lng,   EASE);
+    c.bear  = lerpA(c.bear||0,tg.bear||0,EASE);
+    markers[id].setLatLng([c.lat,c.lng]);
+  }
+  requestAnimationFrame(animLoop);
+}
+animLoop();
+
+// ── Main update ────────────────────────────────────────────────
+function updateVehicles(jsonStr) {
+  var list = JSON.parse(jsonStr);
+  var seen = {};
+
+  list.forEach(function(v){
+    seen[v.Id]=true;
+    var isNew = !markers[v.Id];
+
+    // Ruch?
+    var prev = prevPt[v.Id];
+    var moving = !prev || Math.abs(prev.lat-v.Lat)>1.5e-5 || Math.abs(prev.lng-v.Lng)>1.5e-5;
+    prevPt[v.Id]={lat:v.Lat,lng:v.Lng};
+
+    // Historia pozycji
+    if (!posHist[v.Id]) posHist[v.Id]=[];
+    var h=posHist[v.Id];
+    if (!h.length || Math.abs(h[h.length-1].lat-v.Lat)>5e-6 || Math.abs(h[h.length-1].lng-v.Lng)>5e-6) {
+      h.push({lat:v.Lat,lng:v.Lng});
+      if (h.length>MAX_HIST) h.shift();
+    }
+
+    vehicles[v.Id]={id:v.Id,line:v.Name,color:v.Color,bearing:v.Heading,
+                    lat:v.Lat,lng:v.Lng,stopped:!moving};
+
+    // Trail
+    if (h.length>=2) upsertTrail(v.Id, h, v.Color);
+
+    if (isNew) {
+      curPos[v.Id]={lat:v.Lat,lng:v.Lng,bear:v.Heading};
+      tgtPos[v.Id]={lat:v.Lat,lng:v.Lng,bear:v.Heading};
+      var m=L.marker([v.Lat,v.Lng],{icon:makeIcon(vehicles[v.Id],true),
+                                     zIndexOffset:1000,riseOnHover:true})
+             .bindPopup(makePopup(vehicles[v.Id]),{maxWidth:240,minWidth:190})
+             .addTo(map);
+      markers[v.Id]=m;
+    } else {
+      tgtPos[v.Id].lat  = v.Lat;
+      tgtPos[v.Id].lng  = v.Lng;
+      tgtPos[v.Id].bear = v.Heading;
+      markers[v.Id].setIcon(makeIcon(vehicles[v.Id],false));
+    }
+  });
+
+  // Usuń stare
+  Object.keys(markers).forEach(function(id){
+    if (!seen[id]){
+      map.removeLayer(markers[id]);
+      removeTrail(id);
+      delete markers[id]; delete curPos[id]; delete tgtPos[id];
+      delete vehicles[id]; delete posHist[id]; delete prevPt[id];
+    }
+  });
+}
+
+// ── Stałe tory (GTFS shapes) ──────────────────────────────────
+var routeLayerGroup = L.layerGroup().addTo(map);
+
+function drawRoutes(jsonStr) {
+  routeLayerGroup.clearLayers();
+  var routes = JSON.parse(jsonStr);
+
+  routes.forEach(function(r) {
+    if (!r.points || r.points.length < 2) return;
+    var latlngs = r.points.map(function(p){ return [p[0], p[1]]; });
+    var c = r.color || '#607D8B';
+
+    // Warstwa 1: szeroki blur glow
+    L.polyline(latlngs, {
+      color: c, weight: 8, opacity: 0.07,
+      lineCap: 'round', lineJoin: 'round', interactive: false
+    }).addTo(routeLayerGroup);
+
+    // Warstwa 2: main linia
+    L.polyline(latlngs, {
+      color: c, weight: 2.5, opacity: 0.45,
+      lineCap: 'round', lineJoin: 'round', interactive: false
+    }).addTo(routeLayerGroup);
+
+    // Warstwa 3: biały środek (szyna)
+    L.polyline(latlngs, {
+      color: '#ffffff', weight: 0.8, opacity: 0.18,
+      lineCap: 'round', interactive: false
+    }).addTo(routeLayerGroup);
+  });
+
+  // Tory pod markerami
+  routeLayerGroup.eachLayer(function(l) {
+    if (l.getElement) {
+      var el = l.getElement();
+      if (el) el.style.zIndex = '1';
+    }
+  });
+}
+
+// ── Focus ──────────────────────────────────────────────────────
+function focusVehicles(jsonStr){
+  var pts=JSON.parse(jsonStr);
+  if (!pts.length) return;
+  if (pts.length===1) map.setView([pts[0].Lat,pts[0].Lng],15,{animate:true,duration:.8});
+  else map.fitBounds(pts.map(function(p){return[p.Lat,p.Lng];}),{padding:[60,60],maxZoom:15,animate:true,duration:.8});
+}
+</script>
+</body>
+</html>

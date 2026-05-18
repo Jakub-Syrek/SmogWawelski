@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+*.user
+.vs/
+
+# Android keystore (never commit!)
+*.keystore
+*.jks
+
+# Cache files generated at runtime
+gtfs_shapes_cache.json
+
+# NuGet
+.nuget/
+packages/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rider / VS
+*.DotSettings.user
+.idea/
