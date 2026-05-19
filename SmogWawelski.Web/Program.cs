@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.AspNetCore.ResponseCompression;
 using SmogWawelski.Core;
 using SmogWawelski.Web;
 
@@ -20,12 +19,10 @@ builder.Services.AddSingleton<ShapesCache>();
 builder.Services.AddHostedService<VehicleRefreshService>();
 builder.Services.AddHostedService<ShapesWarmupService>();
 
-builder.Services.AddResponseCompression(o =>
-{
-    o.EnableForHttps = true;
-    o.Providers.Add<GzipCompressionProvider>();
-    o.MimeTypes = new[] { "application/json", "text/json" };
-});
+// Gzip wyłączony — różne implementacje HttpClient w MAUI (AndroidMessageHandler)
+// czasami nie auto-dekompresują pomimo ustawienia AutomaticDecompression, co
+// kończyło się "0x1F is an invalid start of a value" przy deserializacji JSON.
+// JSON tutaj jest mały (200 trams ≈ 30KB), nie warto kombinować.
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
@@ -38,7 +35,6 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 
-app.UseResponseCompression();
 app.UseCors();
 
 // ── Endpoints ─────────────────────────────────────────────────────
