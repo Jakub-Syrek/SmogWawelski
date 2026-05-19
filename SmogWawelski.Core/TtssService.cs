@@ -13,7 +13,31 @@ public class TtssService
     private Dictionary<string, string> _tripToRoute = [];
     private DateTime _routesCachedAt = DateTime.MinValue;
 
+    // Stan do wyliczania prędkości per pojazd (dead-reckoning na froncie).
+    // Trzymamy OSTATNIĄ ruchową pozycję — feed GTFS-RT publikuje co ~15-30s, więc
+    // wiele kolejnych pollów zwraca identyczne wartości. Velocity musi przeżyć te ciche okresy.
+    private sealed class VState
+    {
+        public double Lat, Lng;        // ostatnia pozycja, która faktycznie się zmieniła
+        public long   Ts;              // timestamp (ms) kiedy ta pozycja została zarejestrowana
+        public long   LastSeenTs;      // ostatni poll, niezależnie od ruchu (do TTL/cleanup)
+        public double VLat, VLng;      // EMA wektora prędkości (deg/s)
+    }
+    private readonly Dictionary<string, VState> _vstate = new(512);
+
+    // EMA alpha — wyższe = bardziej reaktywne, niższe = stabilniej.
+    // 0.25 daje wyraźnie spokojniejszy ruch — szum GPS przestaje trząść markerem.
+    private const double VelEma = 0.25;
+
+    // Po jak długim okresie bez ruchu zerujemy prędkość (pojazd faktycznie stoi).
+    private const long StaleVelocityMs = 60_000;
+
     public string LastError { get; private set; } = "";
+
+    // Ostatnia udana lista — używana gdy feed zwróci pustkę (chwilowy błąd ZTP).
+    // Bez tego front kasowałby wszystkie markery i tworzył je od zera kilka sekund później,
+    // gubiąc historię pozycji, velocity i trail (efekt: "skoki" widoczne na mapie).
+    private List<TtssVehicle> _lastGood = [];
 
     public TtssService()
     {
@@ -31,6 +55,7 @@ public class TtssService
 
             var bytes = await _http.GetByteArrayAsync(TramFeed, ct);
             var raw   = GtfsRtParser.Parse(bytes);
+            var now   = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             var result = raw
                 .Where(v => v.Latitude is > 49 and < 51 && v.Longitude is > 19 and < 21) // bbox Kraków
@@ -41,19 +66,38 @@ public class TtssService
                         _tripToRoute.TryGetValue(v.TripId, out routeId);
 
                     var line = NormalizeLine(routeId ?? v.Label ?? "?");
+                    var id   = v.EntityId.Length > 0 ? v.EntityId : v.VehicleId;
+
+                    UpdateVelocity(id, v.Latitude, v.Longitude, now, out var vlat, out var vlng);
+
                     return new TtssVehicle
                     {
-                        Id      = v.EntityId.Length > 0 ? v.EntityId : v.VehicleId,
+                        Id      = id,
                         Name    = line,
                         Lat_f   = v.Latitude,
                         Lng_f   = v.Longitude,
                         Heading = (int)v.Bearing,
-                        Color   = LineColor(line)
+                        Color   = LineColor(line),
+                        VLat    = vlat,
+                        VLng    = vlng,
+                        Ts      = now
                     };
                 })
                 .Where(v => v.Name != "?")
                 .OrderBy(v => v.Name.PadLeft(3, '0'))
                 .ToList();
+
+            // Feed czasem (~1 na 5 pollów) zwraca pustkę — zwróć poprzedni snapshot,
+            // żeby front nie kasował markerów. _lastGood = [] tylko przy pierwszym pollu
+            // lub jeśli feed faktycznie nie ma tramwajów (nocą).
+            if (result.Count == 0 && _lastGood.Count > 0)
+            {
+                Console.WriteLine($"[GTFS-RT] Pusta odpowiedź — zwracam cached ({_lastGood.Count} tramwajów)");
+                return _lastGood;
+            }
+
+            PruneVelocityState(result, now);
+            _lastGood = result;
 
             LastError = "";
             Console.WriteLine($"[GTFS-RT] {result.Count} tramwajów (raw={raw.Count})");
@@ -63,7 +107,8 @@ public class TtssService
         {
             LastError = ex.Message;
             Console.WriteLine($"[GTFS-RT] Błąd: {ex}");
-            return [];
+            // Również przy wyjątku — zwróć cached zamiast pustki
+            return _lastGood.Count > 0 ? _lastGood : [];
         }
     }
 
@@ -101,6 +146,93 @@ public class TtssService
         {
             Console.WriteLine($"[GTFS] Błąd ładowania trips.txt: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Aktualizuje stan prędkości dla pojazdu. KLUCZOWE: trzymamy ostatnią ruchową pozycję
+    /// + jej timestamp. Feed ZTP publikuje co ~15-30s, więc większość pollów zwraca identyczne
+    /// wartości. W "cichym" okresie zachowujemy ostatnią prędkość — front ekstrapoluje płynnie.
+    /// Gdy pojawi się nowa pozycja, liczymy velocity = (new - old) / (now - st.Ts) — dt
+    /// odpowiada faktycznemu czasowi między ruchomymi snapshotami feedu.
+    /// </summary>
+    private void UpdateVelocity(string id, double lat, double lng, long now,
+                                out double vlat, out double vlng)
+    {
+        if (string.IsNullOrEmpty(id)) { vlat = 0; vlng = 0; return; }
+
+        if (!_vstate.TryGetValue(id, out var st))
+        {
+            _vstate[id] = new VState { Lat = lat, Lng = lng, Ts = now, LastSeenTs = now };
+            vlat = 0; vlng = 0;
+            return;
+        }
+
+        st.LastSeenTs = now;
+
+        var dLat = lat - st.Lat;
+        var dLng = lng - st.Lng;
+        var dist2 = dLat * dLat + dLng * dLng;
+
+        // ~7m próg ruchu w stopniach (1° szer. ≈ 111km, 1° dług. w Krakowie ≈ 71km)
+        const double movedThreshold = 4.0e-9;
+
+        if (dist2 < movedThreshold)
+        {
+            // Pozycja niezmieniona — zachowaj velocity bez zmian. Tramwaj jedzie dalej
+            // ekstrapolowany do momentu, aż feed dostarczy nową próbkę.
+            // Po długim czasie bez ruchu (StaleVelocityMs) uznajemy że faktycznie stoi.
+            if (now - st.Ts > StaleVelocityMs)
+            {
+                st.VLat = 0;
+                st.VLng = 0;
+                st.Ts   = now; // resetuj punkt odniesienia
+            }
+        }
+        else
+        {
+            var dt = (now - st.Ts) / 1000.0;
+            if (dt < 0.1) dt = 0.1; // numeryczna higiena
+
+            // Sanity cap — tramwaj <80 km/h ≈ 22 m/s ≈ ~0.0002 deg/s. Daję zapas do 0.0005.
+            const double maxV = 0.0005;
+            var instVLat = Math.Clamp(dLat / dt, -maxV, maxV);
+            var instVLng = Math.Clamp(dLng / dt, -maxV, maxV);
+
+            // EMA — wygładź skoki pojedynczych próbek GPS
+            if (st.VLat == 0 && st.VLng == 0)
+            {
+                // pierwsza obserwacja ruchu — wstrzel jednorazowo bez EMA, inaczej tramwaj
+                // by stał przez kolejne kilka próbek czekając aż EMA się "rozgrzeje"
+                st.VLat = instVLat;
+                st.VLng = instVLng;
+            }
+            else
+            {
+                st.VLat = st.VLat * (1 - VelEma) + instVLat * VelEma;
+                st.VLng = st.VLng * (1 - VelEma) + instVLng * VelEma;
+            }
+            st.Lat = lat;
+            st.Lng = lng;
+            st.Ts  = now;
+        }
+
+        vlat = st.VLat;
+        vlng = st.VLng;
+    }
+
+    /// <summary>Usuń stan pojazdów, które zniknęły z feedu lub są bardzo stare.</summary>
+    private void PruneVelocityState(List<TtssVehicle> current, long now)
+    {
+        var alive = new HashSet<string>(current.Count);
+        foreach (var v in current) alive.Add(v.Id);
+
+        var dead = new List<string>();
+        foreach (var kv in _vstate)
+        {
+            if (!alive.Contains(kv.Key) || now - kv.Value.LastSeenTs > 120_000)
+                dead.Add(kv.Key);
+        }
+        foreach (var k in dead) _vstate.Remove(k);
     }
 
     internal static string NormalizeLinePublic(string id)       => NormalizeLine(id);

@@ -116,7 +116,7 @@ public class MapViewModel : INotifyPropertyChanged
 
     public int TramCount => LastVehicles.Count;
 
-    public void StartAutoRefresh(int intervalSeconds = 5)
+    public void StartAutoRefresh(int intervalSeconds = 2)
     {
         _cts.Cancel();
         _cts = new CancellationTokenSource();

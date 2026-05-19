@@ -90,6 +90,24 @@ html,body { height:100%; background:#0d1117; overflow:hidden; }
 @keyframes trailDash  { to { stroke-dashoffset:-24; } }
 @keyframes trailDash2 { to { stroke-dashoffset:-16; } }
 
+/* ── User location marker ─────────────────────────────────── */
+.user-loc { position:relative; width:22px; height:22px; }
+.user-pulse {
+  position:absolute; inset:-6px;
+  border-radius:50%;
+  background:radial-gradient(circle, rgba(58,134,255,.55) 0%, rgba(58,134,255,0) 70%);
+  animation:userPulse 1.8s ease-in-out infinite;
+  pointer-events:none;
+}
+.user-dot {
+  position:absolute; inset:4px;
+  border-radius:50%;
+  background:#3a86ff;
+  border:2.5px solid #fff;
+  box-shadow:0 0 0 1px rgba(0,0,0,.4),0 2px 8px rgba(0,0,0,.7),0 0 14px rgba(58,134,255,.8);
+}
+@keyframes userPulse { 0%,100%{opacity:.5;transform:scale(1)} 50%{opacity:1;transform:scale(1.35)} }
+
 /* ── Popup ──────────────────────────────────────────────────── */
 .leaflet-popup-content-wrapper {
   background:#161b22; border:1px solid #30363d;
@@ -138,88 +156,106 @@ function injectSvgCSS() {
 }
 
 // ── State ──────────────────────────────────────────────────────
-var vehicles  = {};   // id → data
+var vehicles  = {};   // id → data (line, color, line+stopped state key)
 var markers   = {};   // id → L.Marker
-var curPos    = {};   // id → {lat,lng,bear}
-var tgtPos    = {};   // id → {lat,lng,bear}
-var posHist   = {};   // id → [{lat,lng}]  ostatnie 14 punktów
-var trailLyrs = {};   // id → [L.Polyline × 4]
-var prevPt    = {};   // id → {lat,lng}  dla detekcji ruchu
+var mEl       = {};   // id → cached DOM root .tm
+var mArr      = {};   // id → cached DOM .tm-arrow (do szybkiej rotacji)
+var iconKey   = {};   // id → string klucz aktualnie zrenderowanej ikony
+var curPos    = {};   // id → {lat,lng,bear}  pozycja renderowana
+var tgtPos    = {};   // id → {lat,lng,bear,vlat,vlng,ts}  ostatni snapshot z serwera + velocity
+var corr      = {};   // id → {dlat,dlng,t0,dur}  trwająca korekta (smooth blend do nowej próbki)
+var posHist   = {};   // id → [{lat,lng}]  ostatnie pkt do rysowania trail
+var trailLyrs = {};   // id → [L.Polyline]  reusable pool
 
-var MAX_HIST = 10;  // tylko ostatnie 10 pkt — ogon nie za długi
-var cvs = L.canvas({ padding: 0.5 }); // Canvas renderer dla efektywności
+var MAX_HIST = 10;
+var cvs = L.canvas({ padding: 0.5 });
 
-// ── Trail — efekt komety ───────────────────────────────────────
-// Każdy segment ma własną opacity: 0→1 od ogona do głowy
+// ── Trail — efekt komety (reusable pool, brak remove/add per update) ──
+// Pula ma stały rozmiar (MAX_HIST-1) * 2 polylines (glow + core) + 1 head dash.
+// Aktualizacja = setLatLngs + setStyle, nie remove/add → brak GC churn.
 function upsertTrail(id, pts, color) {
-  removeTrail(id);
-  if (pts.length < 2) return;
-
-  var layers = [];
   var n = pts.length;
+  var pool = trailLyrs[id];
 
-  for (var i = 1; i < n; i++) {
-    var t = i / (n - 1);          // 0.0 = ogon (stary), 1.0 = głowa (nowy)
-    var seg = [[pts[i-1].lat, pts[i-1].lng], [pts[i].lat, pts[i].lng]];
-    var isHead = (i === n - 1);   // ostatni segment
-
-    // Warstwa 1: szerokie glow
-    layers.push(L.polyline(seg, {
-      renderer: cvs, color: color,
-      weight: 10, opacity: t * 0.10,
-      lineCap: 'round', interactive: false
-    }).addTo(map));
-
-    // Warstwa 2: core
-    layers.push(L.polyline(seg, {
-      renderer: cvs, color: color,
-      weight: isHead ? 3 : 2,
-      opacity: t * 0.75 + 0.05,
-      dashArray: isHead ? '7 4' : null,
-      lineCap: 'round', interactive: false
-    }).addTo(map));
-
-    // Warstwa 3: biały highlight tylko na najnowszych segmentach
-    if (t > 0.55) {
-      layers.push(L.polyline(seg, {
-        renderer: cvs, color: '#ffffff',
-        weight: 1, opacity: (t - 0.55) * 0.8,
+  if (!pool) {
+    pool = { glow: [], core: [], head: null };
+    for (var k = 0; k < MAX_HIST - 1; k++) {
+      pool.glow.push(L.polyline([], {
+        renderer: cvs, color: color, weight: 10, opacity: 0,
+        lineCap: 'round', interactive: false
+      }).addTo(map));
+      pool.core.push(L.polyline([], {
+        renderer: cvs, color: color, weight: 2, opacity: 0,
         lineCap: 'round', interactive: false
       }).addTo(map));
     }
-  }
-
-  // Animowany dash na ostatnim segmencie (SVG head)
-  if (n >= 2) {
-    var headSeg = [[pts[n-2].lat, pts[n-2].lng], [pts[n-1].lat, pts[n-1].lng]];
-    var headLine = L.polyline(headSeg, {
-      color: color, weight: 2, opacity: 0.9,
+    pool.head = L.polyline([], {
+      color: color, weight: 2, opacity: 0,
       dashArray: '8 5', lineCap: 'round', interactive: false
     }).addTo(map);
-    function addAnim(poly) {
-      var el = poly.getElement ? poly.getElement() : null;
-      if (el) el.classList.add('tr-core');
-      else poly.on('add', function(){ var e=this.getElement(); if(e) e.classList.add('tr-core'); });
-    }
-    addAnim(headLine);
-    layers.push(headLine);
-    injectSvgCSS();
+    trailLyrs[id] = pool;
   }
 
-  trailLyrs[id] = layers;
+  // Każdy segment[i] łączy pts[i] z pts[i+1]; i = 0..n-2
+  var segCount = n - 1;
+  for (var i = 0; i < pool.glow.length; i++) {
+    if (i < segCount) {
+      var a = pts[i], b = pts[i + 1];
+      var t = (i + 1) / segCount; // 0..1, głowa = 1
+      var seg = [[a.lat, a.lng], [b.lat, b.lng]];
+      var isHead = (i === segCount - 1);
+
+      pool.glow[i].setLatLngs(seg);
+      pool.glow[i].setStyle({ color: color, opacity: t * 0.10 });
+
+      pool.core[i].setLatLngs(seg);
+      pool.core[i].setStyle({
+        color: color,
+        weight: isHead ? 3 : 2,
+        opacity: t * 0.75 + 0.05
+      });
+    } else {
+      // niewykorzystany segment — schowaj
+      pool.glow[i].setStyle({ opacity: 0 });
+      pool.core[i].setStyle({ opacity: 0 });
+      pool.glow[i].setLatLngs([]);
+      pool.core[i].setLatLngs([]);
+    }
+  }
+
+  if (segCount >= 1) {
+    var hA = pts[n - 2], hB = pts[n - 1];
+    pool.head.setLatLngs([[hA.lat, hA.lng], [hB.lat, hB.lng]]);
+    pool.head.setStyle({ color: color, opacity: 0.9 });
+    var headEl = pool.head.getElement && pool.head.getElement();
+    if (headEl && !headEl.classList.contains('tr-core')) {
+      headEl.classList.add('tr-core');
+      injectSvgCSS();
+    }
+  } else {
+    pool.head.setStyle({ opacity: 0 });
+    pool.head.setLatLngs([]);
+  }
 }
 
 function removeTrail(id) {
-  if (!trailLyrs[id]) return;
-  trailLyrs[id].forEach(function(l){ map.removeLayer(l); });
+  var pool = trailLyrs[id];
+  if (!pool) return;
+  pool.glow.forEach(function(l){ map.removeLayer(l); });
+  pool.core.forEach(function(l){ map.removeLayer(l); });
+  if (pool.head) map.removeLayer(pool.head);
   delete trailLyrs[id];
 }
 
 // ── Marker icon ────────────────────────────────────────────────
+// Klucz "ikony": jeśli się nie zmienia, NIE wołamy setIcon (drogie — rebuild DOM).
+// Rotację strzałki i klasę stopped robimy bezpośrednio na cached DOM (mArr/mEl).
+function iconKeyFor(v) { return v.line + '|' + v.color; }
+
 function makeIcon(v, enter) {
   var sz = v.line.length > 2 ? 40 : 38;
   var fs = v.line.length > 2 ? 10 : 13;
-  var cls = 'tm' + (enter ? ' tm-enter' : '') + (v.stopped ? ' stopped' : '');
+  var cls = 'tm' + (enter ? ' tm-enter' : '');
   return L.divIcon({
     className:'',
     html:'<div class="'+cls+'" style="--c:'+v.color+';width:'+sz+'px;height:'+sz+'px">'+
@@ -236,6 +272,29 @@ function makeIcon(v, enter) {
   });
 }
 
+function cacheMarkerDom(id) {
+  var m = markers[id];
+  if (!m) return;
+  var el = m.getElement && m.getElement();
+  if (!el) return;
+  var root = el.querySelector('.tm');
+  if (!root) return;
+  mEl[id]  = root;
+  mArr[id] = root.querySelector('.tm-arrow');
+}
+
+function applyHeading(id, bear) {
+  var arr = mArr[id];
+  if (arr) arr.style.transform = 'translateX(-50%) rotate(' + (bear || 0) + 'deg)';
+}
+
+function applyStopped(id, stopped) {
+  var root = mEl[id];
+  if (!root) return;
+  if (stopped && !root.classList.contains('stopped')) root.classList.add('stopped');
+  else if (!stopped && root.classList.contains('stopped')) root.classList.remove('stopped');
+}
+
 function makePopup(v) {
   return '<div class="popup-title">'+v.line+
          '<span class="popup-chip" style="background:'+v.color+'">🚋 linia</span></div>'+
@@ -245,21 +304,92 @@ function makePopup(v) {
          '</div>';
 }
 
-// ── Animation loop ─────────────────────────────────────────────
-var EASE = 0.10;
+// ── Animation loop — dead-reckoning + smooth correction ───────
+// 1) Każda klatka: pos = tgt.pos + velocity * (nowTs - tgt.ts)  → ciągły ruch
+// 2) Gdy przychodzi nowa próbka: liczymy delta między aktualnie renderowaną pozycją
+//    a nową ekstrapolowaną — i rozkładamy korektę na ~CORR_MS, żeby nie było snapu.
+// 3) Heading lerp na kierunku ruchu (jeśli jedzie) lub na bearing z feedu (jeśli stoi).
+
+var CORR_MS = 1500;      // dłuższe wygładzanie = niewidoczna korekta
+var BEAR_EASE = 0.08;    // wolniejsza rotacja strzałki = bardziej organicznie
+var FRAME_MIN_MS = 33;   // throttle animLoop do ~30fps (WebView i tak nie ciągnie 60)
+var lastBearAppliedAt = {}; // id → bearing ostatnio zaaplikowany (throttle DOM writes)
+var lastAnimT = 0;
+
 function lerpA(a,b,t){ var d=((b-a+540)%360)-180; return a+d*t; }
-function lerp(a,b,t){ return a+(b-a)*t; }
+
+function predict(tg, nowMs) {
+  var dt = (nowMs - tg.ts) / 1000.0;
+  // Cap extrapolacji — po 30s bez nowych danych przestajemy "wymyślać" ruch
+  if (dt > 30) dt = 30;
+  return {
+    lat: tg.lat + (tg.vlat || 0) * dt,
+    lng: tg.lng + (tg.vlng || 0) * dt
+  };
+}
 
 function animLoop(){
+  var now = performance.now();
+  // Throttle do ~30fps — WebView na Androidzie i tak nie wyrabia 60 przy 200 markerach,
+  // a kosztowne operacje (setLatLng, DOM writes) są wtedy odpalane o połowę rzadziej.
+  if (now - lastAnimT < FRAME_MIN_MS) { requestAnimationFrame(animLoop); return; }
+  lastAnimT = now;
+
+  var nowMs = Date.now();
+  var bounds = map.getBounds();
+  var pad = bounds.pad(0.2); // viewport + 20% margin — poza tym renderujemy mniej
+
   for (var id in tgtPos) {
-    if (!markers[id]||!curPos[id]) continue;
-    var c=curPos[id], tg=tgtPos[id];
-    var dl=Math.abs(tg.lat-c.lat), dn=Math.abs(tg.lng-c.lng);
-    if (dl<1e-8&&dn<1e-8) continue;
-    c.lat   = lerp(c.lat,  tg.lat,   EASE);
-    c.lng   = lerp(c.lng,  tg.lng,   EASE);
-    c.bear  = lerpA(c.bear||0,tg.bear||0,EASE);
-    markers[id].setLatLng([c.lat,c.lng]);
+    var m = markers[id]; if (!m) continue;
+    var c = curPos[id], tg = tgtPos[id]; if (!c || !tg) continue;
+
+    var pr = predict(tg, nowMs);
+    var lat = pr.lat, lng = pr.lng;
+
+    // Korekta po nowej próbce: blend między poprzednim renderem a ekstrapolacją
+    var co = corr[id];
+    if (co) {
+      var k = (now - co.t0) / co.dur;
+      if (k >= 1) { corr[id] = null; }
+      else {
+        // ease-out kwadratowy — szybko startuje, łagodnie domyka
+        var e = 1 - (1 - k) * (1 - k);
+        lat += co.dlat * (1 - e);
+        lng += co.dlng * (1 - e);
+      }
+    }
+
+    // Cull poza viewportem — pozycje nadal liczymy w pamięci, ale nie
+    // wołamy setLatLng (Leaflet i tak by go nie narysował, ale to oszczędza CPU).
+    var visible = pad.contains([lat, lng]);
+    var moved = Math.abs(lat - c.lat) > 5e-7 || Math.abs(lng - c.lng) > 5e-7;
+
+    if (visible && moved) {
+      c.lat = lat; c.lng = lng;
+      m.setLatLng([lat, lng]);
+    } else if (!visible) {
+      c.lat = lat; c.lng = lng;
+    }
+
+    // Heading — preferuj wektor ruchu (kierunek velocity), bo bearing z GPS bywa skoczny
+    var vl = tg.vlat || 0, vn = tg.vlng || 0;
+    var vMag2 = vl*vl + vn*vn;
+    var targetBear;
+    if (vMag2 > 1e-12) {
+      // azymut z wektora: atan2(Δlng*cos(lat), Δlat)
+      var clat = Math.cos(lat * Math.PI / 180);
+      targetBear = (Math.atan2(vn * clat, vl) * 180 / Math.PI + 360) % 360;
+    } else {
+      targetBear = tg.bear || 0;
+    }
+    c.bear = lerpA(c.bear || 0, targetBear, BEAR_EASE);
+
+    // Throttle DOM write strzałki — tylko gdy zmiana > 2°
+    var last = lastBearAppliedAt[id];
+    if (visible && (last == null || Math.abs(((c.bear - last + 540) % 360) - 180) > 2)) {
+      applyHeading(id, c.bear);
+      lastBearAppliedAt[id] = c.bear;
+    }
   }
   requestAnimationFrame(animLoop);
 }
@@ -268,18 +398,24 @@ animLoop();
 // ── Main update ────────────────────────────────────────────────
 function updateVehicles(jsonStr) {
   var list = JSON.parse(jsonStr);
+
+  // Defense in depth: jeśli feed nagle zwrócił pustkę a mamy już sporo markerów,
+  // to chwilowy błąd serwera. Nie kasuj wszystkiego — odczekaj na następny update.
+  if (list.length === 0 && Object.keys(markers).length > 10) return;
+
   var seen = {};
+  var nowPerf = performance.now();
+  var viewPad = map.getBounds().pad(0.3); // generous margin dla trail render
 
   list.forEach(function(v){
     seen[v.Id]=true;
     var isNew = !markers[v.Id];
 
-    // Ruch?
-    var prev = prevPt[v.Id];
-    var moving = !prev || Math.abs(prev.lat-v.Lat)>1.5e-5 || Math.abs(prev.lng-v.Lng)>1.5e-5;
-    prevPt[v.Id]={lat:v.Lat,lng:v.Lng};
+    // Velocity = 0 z backendu → tramwaj stoi
+    var vlat = v.VLat || 0, vlng = v.VLng || 0;
+    var moving = (vlat*vlat + vlng*vlng) > 1e-14;
 
-    // Historia pozycji
+    // Historia pozycji (do trail)
     if (!posHist[v.Id]) posHist[v.Id]=[];
     var h=posHist[v.Id];
     if (!h.length || Math.abs(h[h.length-1].lat-v.Lat)>5e-6 || Math.abs(h[h.length-1].lng-v.Lng)>5e-6) {
@@ -287,25 +423,71 @@ function updateVehicles(jsonStr) {
       if (h.length>MAX_HIST) h.shift();
     }
 
+    var prevVeh = vehicles[v.Id];
     vehicles[v.Id]={id:v.Id,line:v.Name,color:v.Color,bearing:v.Heading,
                     lat:v.Lat,lng:v.Lng,stopped:!moving};
 
-    // Trail
-    if (h.length>=2) upsertTrail(v.Id, h, v.Color);
+    // Trail rysuj tylko jeśli tramwaj jest w/blisko viewportu — to oszczędza
+    // setLatLngs+setStyle na 9 polylines × N off-screen pojazdów = duża wygrana CPU.
+    var visForTrail = viewPad.contains([v.Lat, v.Lng]);
+    if (visForTrail && h.length>=2) upsertTrail(v.Id, h, v.Color);
+    else if (!visForTrail && trailLyrs[v.Id]) removeTrail(v.Id);
 
     if (isNew) {
       curPos[v.Id]={lat:v.Lat,lng:v.Lng,bear:v.Heading};
-      tgtPos[v.Id]={lat:v.Lat,lng:v.Lng,bear:v.Heading};
+      tgtPos[v.Id]={lat:v.Lat,lng:v.Lng,bear:v.Heading,
+                    vlat:vlat,vlng:vlng,ts:v.Ts || Date.now()};
       var m=L.marker([v.Lat,v.Lng],{icon:makeIcon(vehicles[v.Id],true),
                                      zIndexOffset:1000,riseOnHover:true})
              .bindPopup(makePopup(vehicles[v.Id]),{maxWidth:240,minWidth:190})
              .addTo(map);
       markers[v.Id]=m;
+      iconKey[v.Id] = iconKeyFor(vehicles[v.Id]);
+      // Cache DOM po dodaniu — Leaflet stworzył już element
+      setTimeout(function(){ cacheMarkerDom(v.Id); applyStopped(v.Id, !moving); }, 0);
     } else {
-      tgtPos[v.Id].lat  = v.Lat;
-      tgtPos[v.Id].lng  = v.Lng;
-      tgtPos[v.Id].bear = v.Heading;
-      markers[v.Id].setIcon(makeIcon(vehicles[v.Id],false));
+      var c = curPos[v.Id], tgOld = tgtPos[v.Id];
+      var nowMs = Date.now();
+
+      // Czy feed zwrócił dokładnie tę samą pozycję co poprzednio?
+      // (typowe — feed publikuje co ~15-30s, my pollujemy co 2s)
+      var samePos = Math.abs(v.Lat - tgOld.lat) < 1e-7 && Math.abs(v.Lng - tgOld.lng) < 1e-7;
+
+      if (samePos) {
+        // Tylko zaktualizuj velocity/ts (backend mógł je przeliczyć), bez korekty.
+        // To pozwala dead-reckoning kontynuować bez przerw.
+        tgOld.vlat = vlat;
+        tgOld.vlng = vlng;
+        // ts NIE aktualizujemy — predict() musi cały czas ekstrapolować od pierwotnego punktu
+      } else {
+        // Prawdziwie nowy snapshot — płynna korekta z renderowanej pozycji do nowej predykcji.
+        var newTg = { lat: v.Lat, lng: v.Lng, bear: v.Heading,
+                      vlat: vlat, vlng: vlng, ts: v.Ts || nowMs };
+        var newPred = predict(newTg, nowMs);
+
+        // offset = c − newPred; w animLoop: render = newPred + offset*decay
+        // t=t0: render = c (płynne podchwycenie),  t=t0+dur: render = newPred
+        var dlat = c.lat - newPred.lat;
+        var dlng = c.lng - newPred.lng;
+
+        var corrMag2 = dlat*dlat + dlng*dlng;
+        if (corrMag2 > 1e-12) {
+          corr[v.Id] = { dlat: dlat, dlng: dlng, t0: nowPerf, dur: CORR_MS };
+        } else {
+          corr[v.Id] = null;
+        }
+        tgtPos[v.Id] = newTg;
+      }
+
+      // setIcon tylko gdy linia/kolor się zmieniły (pojazd dostał inną trasę)
+      var newKey = iconKeyFor(vehicles[v.Id]);
+      if (iconKey[v.Id] !== newKey) {
+        markers[v.Id].setIcon(makeIcon(vehicles[v.Id], false));
+        iconKey[v.Id] = newKey;
+        setTimeout(function(){ cacheMarkerDom(v.Id); }, 0);
+      }
+      // Stan stopped — tania zmiana klasy
+      if (!prevVeh || prevVeh.stopped !== !moving) applyStopped(v.Id, !moving);
     }
   });
 
@@ -315,7 +497,9 @@ function updateVehicles(jsonStr) {
       map.removeLayer(markers[id]);
       removeTrail(id);
       delete markers[id]; delete curPos[id]; delete tgtPos[id];
-      delete vehicles[id]; delete posHist[id]; delete prevPt[id];
+      delete vehicles[id]; delete posHist[id]; delete corr[id];
+      delete mEl[id]; delete mArr[id]; delete iconKey[id];
+      delete lastBearAppliedAt[id];
     }
   });
 }
@@ -358,6 +542,28 @@ function drawRoutes(jsonStr) {
       if (el) el.style.zIndex = '1';
     }
   });
+}
+
+// ── Lokalizacja użytkownika ────────────────────────────────────
+var userMarker = null;
+var userAccCircle = null;
+
+function centerOnUser(lat, lng) {
+  // Marker — niebieski "puls" odróżnia się od tramwajów
+  if (!userMarker) {
+    userMarker = L.marker([lat, lng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div class="user-loc"><div class="user-pulse"></div><div class="user-dot"></div></div>',
+        iconSize: [22, 22], iconAnchor: [11, 11]
+      }),
+      zIndexOffset: 2000, interactive: false
+    }).addTo(map);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+  }
+  // Zoom 15 — widać ulice i sąsiednie tramwaje, ale bez "klaustrofobii"
+  map.flyTo([lat, lng], 15, { duration: 0.8 });
 }
 
 // ── Focus ──────────────────────────────────────────────────────

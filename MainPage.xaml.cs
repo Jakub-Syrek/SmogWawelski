@@ -21,6 +21,7 @@ public partial class MainPage : ContentPage
         InitializeComponent();
         BindingContext = _vm;
         LinesList.ItemsSource = _vm.TramLines;
+        _capture.SetMapView(MapView);
 
         _vm.OnVehiclesUpdated = PushVehiclesToMapAsync;
         _vm.PropertyChanged += (_, e) =>
@@ -45,7 +46,7 @@ public partial class MainPage : ContentPage
     {
         base.OnAppearing();
         LoadMap();
-        _vm.StartAutoRefresh(5);
+        _vm.StartAutoRefresh(2);
     }
 
     protected override void OnDisappearing()
@@ -102,7 +103,8 @@ public partial class MainPage : ContentPage
     {
         if (!_mapReady) return;
         var payload = JsonSerializer.Serialize(vehicles.Select(v => new
-            { v.Id, v.Name, v.Lat, v.Lng, v.Color, Heading = v.Heading }));
+            { v.Id, v.Name, v.Lat, v.Lng, v.Color, Heading = v.Heading,
+              VLat = v.VLat, VLng = v.VLng, Ts = v.Ts }));
         var escaped = payload.Replace("\\","\\\\").Replace("'","\\'").Replace("\n","").Replace("\r","");
         await MainThread.InvokeOnMainThreadAsync(async () =>
         {
@@ -158,6 +160,44 @@ public partial class MainPage : ContentPage
 
     // ── Screenshot ───────────────────────────────────────────────
 
+    private async void OnCenterClicked(object? sender, EventArgs e)
+    {
+        if (!_mapReady) return;
+
+        try
+        {
+            var status = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
+            if (status != PermissionStatus.Granted)
+                status = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
+
+            if (status == PermissionStatus.Granted)
+            {
+                var loc = await Geolocation.Default.GetLastKnownLocationAsync()
+                          ?? await Geolocation.Default.GetLocationAsync(new GeolocationRequest(
+                                  GeolocationAccuracy.Medium, TimeSpan.FromSeconds(8)));
+
+                if (loc != null && loc.Latitude is > 49 and < 51 && loc.Longitude is > 19 and < 21)
+                {
+                    var lat = loc.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var lng = loc.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    await MainThread.InvokeOnMainThreadAsync(async () =>
+                    {
+                        try { await MapView.EvaluateJavaScriptAsync($"centerOnUser({lat},{lng});"); } catch { }
+                    });
+                    return;
+                }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[Geo] {ex.Message}"); }
+
+        // Fallback — środek Krakowa
+        await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            try { await MapView.EvaluateJavaScriptAsync("map.setView([50.0614,19.9366],14,{animate:true,duration:0.6});"); }
+            catch { }
+        });
+    }
+
     private async void OnScreenshotClicked(object? sender, EventArgs e)
     {
         var path = await _capture.TakeScreenshotAsync();
@@ -178,22 +218,20 @@ public partial class MainPage : ContentPage
     private void StartRecording()
     {
         _recordSeconds = 0;
-        _capture.StartRecording(Dispatcher);
+        // 100ms = 10fps — wystarczająco płynnie dla MP4, a Screenshot.CaptureAsync wyrabia
+        _capture.StartRecording(Dispatcher, fpsMs: 100, maxSeconds: 120);
 
-        // Pulsujący czerwony przycisk
-        RecordBtn.Text             = "⏹";
+        RecordBtn.Text               = "⏹";
         RecordBorder.BackgroundColor = Color.FromRgb(100, 0, 0);
         RecordingIndicator.IsVisible = true;
 
-        // Zegar sekundowy
         _recordClock          = Dispatcher.CreateTimer();
         _recordClock.Interval = TimeSpan.FromSeconds(1);
         _recordClock.Tick    += (_, _) =>
         {
             _recordSeconds++;
-            RecordingLabel.Text = $"REC {_recordSeconds}s";
-            // Auto-stop po 30 sekundach
-            if (_recordSeconds >= 30)
+            RecordingLabel.Text = $"REC {_recordSeconds}s · {_capture.FrameCount}f";
+            if (_recordSeconds >= 120)
                 MainThread.BeginInvokeOnMainThread(async () => await StopRecordingAsync());
         };
         _recordClock.Start();
@@ -207,14 +245,104 @@ public partial class MainPage : ContentPage
         RecordingIndicator.IsVisible = false;
         RecordingLabel.Text          = "REC 0s";
 
-        StatusLabel.Text = "Przygotowuję klatki…";
-        var frames = await _capture.StopAndGetFramesAsync();
-
-        if (frames.Count >= 2)
-            await ScreenCaptureService.ShareFramesAsync(frames, $"MPK Kraków — {frames.Count} klatek");
-        else
+        if (_capture.FrameCount < 2)
+        {
             await DisplayAlert("Info", "Za mało klatek — nagraj dłużej niż 2 sekundy", "OK");
+            return;
+        }
+
+        var outPath = await _capture.StopAndSaveAsync(frameDelayMs: 100,
+            status => MainThread.BeginInvokeOnMainThread(() => StatusLabel.Text = status));
+
+        if (outPath != null)
+        {
+            var ext = Path.GetExtension(outPath).TrimStart('.').ToUpperInvariant();
+            StatusLabel.Text = $"✅ {ext} zapisany do DCIM/Camera";
+
+            var action = await DisplayActionSheet(
+                "Co zrobić z nagraniem?",
+                "Pomiń", null,
+                "📘 Facebook", "📤 Udostępnij...", "📁 Pokaż w folderze");
+
+            switch (action)
+            {
+                case "📘 Facebook":
+                    await ShareToFacebookAsync(outPath);
+                    break;
+                case "📤 Udostępnij...":
+                    await ScreenCaptureService.ShareFileAsync(outPath, "MPK Kraków — tramwaje live");
+                    break;
+                case "📁 Pokaż w folderze":
+                    OpenContainingFolder(outPath);
+                    break;
+            }
+        }
+        else
+        {
+            await DisplayAlert("Błąd", "Nie udało się zapisać nagrania", "OK");
+        }
 
         StatusLabel.Text = _vm.Status;
+    }
+
+    // ── Facebook share ──────────────────────────────────────────
+    private async Task ShareToFacebookAsync(string filePath)
+    {
+#if ANDROID
+        // Spróbuj uruchomić appkę Facebooka z plikiem (com.facebook.katana).
+        // Jeśli nie zainstalowana — fallback do generic share, gdzie user wybierze FB Lite/Messenger itd.
+        try
+        {
+            var ctx = Android.App.Application.Context;
+            var file = new Java.IO.File(filePath);
+            var authority = ctx.PackageName + ".fileProvider";
+            var uri = AndroidX.Core.Content.FileProvider.GetUriForFile(ctx, authority, file);
+            var intent = new Android.Content.Intent(Android.Content.Intent.ActionSend);
+            intent.SetType("video/mp4");
+            intent.PutExtra(Android.Content.Intent.ExtraStream, uri);
+            intent.AddFlags(Android.Content.ActivityFlags.GrantReadUriPermission | Android.Content.ActivityFlags.NewTask);
+            intent.SetPackage("com.facebook.katana");
+            ctx.StartActivity(intent);
+            return;
+        }
+        catch (Android.Content.ActivityNotFoundException)
+        {
+            // FB nie zainstalowany — fallback do generic share
+            await ScreenCaptureService.ShareFileAsync(filePath, "MPK Kraków — tramwaje live");
+            return;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FB] Intent failed: {ex.Message}");
+        }
+#endif
+        // Windows / iOS / fallback: otwórz facebook.com w przeglądarce + pokaż folder żeby user mógł upload-nąć
+        try
+        {
+            await Launcher.OpenAsync("https://www.facebook.com/");
+            OpenContainingFolder(filePath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FB] Launch failed: {ex.Message}");
+            await ScreenCaptureService.ShareFileAsync(filePath, "MPK Kraków — tramwaje live");
+        }
+    }
+
+    private static void OpenContainingFolder(string filePath)
+    {
+        try
+        {
+#if WINDOWS
+            System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{filePath}\"");
+#else
+            // Inne platformy — otwórz katalog jako URI
+            _ = Launcher.OpenAsync(new OpenFileRequest("Folder", new ReadOnlyFile(filePath)));
+#endif
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Folder] Open failed: {ex.Message}");
+        }
     }
 }

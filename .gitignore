@@ -22,3 +22,7 @@ Thumbs.db
 # Rider / VS
 *.DotSettings.user
 .idea/
+
+# Editor / agent metadata
+.claude/
+.vscode/

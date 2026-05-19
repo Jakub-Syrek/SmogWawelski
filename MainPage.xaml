@@ -88,6 +88,20 @@
                             FontSize="20" Padding="0"
                             Clicked="OnScreenshotClicked"/>
                 </Border>
+
+                <!-- Centruj -->
+                <Border BackgroundColor="#21262d"
+                        StrokeShape="RoundRectangle 28"
+                        Stroke="#30363d" WidthRequest="52" HeightRequest="52">
+                    <Border.Shadow>
+                        <Shadow Brush="Black" Opacity="0.5" Radius="8" Offset="0,3"/>
+                    </Border.Shadow>
+                    <Button Text="⊙"
+                            BackgroundColor="Transparent"
+                            TextColor="#58a6ff"
+                            FontSize="22" Padding="0"
+                            Clicked="OnCenterClicked"/>
+                </Border>
             </VerticalStackLayout>
 
             <!-- Wskaźnik nagrywania (lewy górny) -->
