@@ -1,0 +1,40 @@
+# Build output everywhere
+**/bin
+**/obj
+
+# IDE / agent metadata
+.vs
+.vscode
+.idea
+.claude
+**/*.user
+
+# MAUI client artifacts — niepotrzebne w obrazie API
+Resources/
+Platforms/
+SmogWawelski.csproj
+SmogWawelski.sln
+MainPage.xaml
+MainPage.xaml.cs
+App.xaml
+App.xaml.cs
+AppShell.xaml
+AppShell.xaml.cs
+MauiProgram.cs
+Services/
+ViewModels/
+Models/
+SmogWawelski.Tests/
+
+# Git
+.git
+.github
+.gitignore
+.gitattributes
+
+# Docs
+README.md
+LICENSE
+
+# Local caches
+gtfs_shapes_cache.json

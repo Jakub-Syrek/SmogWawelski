@@ -45,36 +45,43 @@ Real-time tram tracker for Kraków (MPK) built with **.NET MAUI**. Shows live po
 ## 🏗️ Architecture
 
 ```
-SmogWawelski/                       ← MAUI app (UI, WebView, recording)
+SmogWawelski/                       ← MAUI client (UI, WebView, recording)
 │  ├── MainPage.xaml(.cs)           ← Map screen + line filter + record/share UI
 │  ├── ViewModels/MapViewModel.cs   ← Auto-refresh loop (2 s), filter state
+│  ├── Services/ApiClient.cs        ← HTTP client → SmogWawelski.Web
 │  ├── Services/ScreenCaptureService ← Composite WebView2+chrome capture, MP4/GIF pipeline
 │  ├── Services/Mp4Writer.cs        ← Windows: MediaComposition H.264 encoder
 │  ├── Services/GifWriter.cs        ← Pure-C# GIF89a + LZW fallback
 │  └── Resources/Raw/map.html       ← Leaflet map + dead-reckoning animation loop
-SmogWawelski.Core/                  ← Shared logic (no MAUI dependency)
+SmogWawelski.Web/                   ← ASP.NET Core API (deployed to Railway)
+│  ├── Program.cs                   ← Minimal API: /vehicles, /shapes, /health
+│  └── Services.cs                  ← VehicleRefreshService (poll 2 s), VehicleStore, ShapesCache
+SmogWawelski.Core/                  ← Shared logic used by both client and backend
 │  ├── GtfsRtParser                 ← Binary GTFS-RT protobuf parser
-│  ├── TtssService                  ← Fetches live positions, computes velocity vectors (EMA)
+│  ├── TtssService                  ← Fetches ZTP, computes velocity vectors (EMA)
 │  ├── GtfsShapeService             ← Downloads + caches route shapes (3-day TTL)
 │  └── TtssModels                   ← TtssVehicle (with VLat/VLng/Ts for dead-reckoning)
 SmogWawelski.Tests/                 ← xUnit tests (35 tests)
+Dockerfile + railway.toml           ← Backend deploy config
 ```
 
 **Data flow:**
 ```
-ZTP Kraków GTFS-RT  ──► GtfsRtParser ──► TtssService ──► MapViewModel
-     .pb (protobuf)            │           │  ▲ poll 2s        │
-                               ▼           ▼  │                ▼
-                         velocity tracker (EMA) ──► JSON {Lat,Lng,VLat,VLng,Ts,Heading}
-                                                              │
+ZTP Kraków GTFS-RT  ──► [SmogWawelski.Web]              ──► [MAUI client]
+     .pb (protobuf)       GtfsRtParser → TtssService          ApiClient (HTTP)
+     poll every 2 s       │                                   │
+                          ▼ velocity tracker (EMA)            ▼ MapViewModel
+                          VehicleStore (in-memory)            JSON {lat,lng,vLat,vLng,ts,heading,...}
+                          │                                   │
+                          ▼ GET /vehicles ────────────────────►│
                                                               ▼
-                                                   WebView (Leaflet.js)
-                                                   ▼ dead-reckoning loop @30fps
-                                                   pos = (Lat,Lng) + (VLat,VLng)·(now−Ts)
-                                                   + smooth correction blend on new sample
+                                                  WebView (Leaflet.js)
+                                                  ▼ dead-reckoning loop @30 fps
+                                                  pos = (lat,lng) + (vLat,vLng)·(now−ts)
+                                                  + smooth correction blend on new sample
 
-ZTP Kraków GTFS static ──► GtfsShapeService ──► disk cache ──► drawRoutes() in JS
-     .zip (shapes.txt)
+ZTP Kraków GTFS static ──► GtfsShapeService ──► ShapesCache ──► GET /shapes ──► drawRoutes() in JS
+     .zip (shapes.txt)       24h refresh
 ```
 
 ### Smooth motion — how it works
@@ -118,14 +125,50 @@ dotnet test SmogWawelski.Tests/
 
 ---
 
-## 📡 Data Sources
+## 📡 Data Flow
 
-| Source | URL | Update interval |
+The MAUI client doesn't talk to ZTP directly — it talks to **our own backend** (`SmogWawelski.Web`)
+deployed on Railway. The backend is the single source of truth: it polls ZTP every 2 s,
+computes velocity vectors per vehicle, caches shape data, and serves all clients from memory.
+
+| Hop | URL | Update interval |
 |---|---|---|
-| GTFS-RT vehicles | `https://gtfs.ztp.krakow.pl/VehiclePositions_T.pb` | ~30s |
-| GTFS static (shapes) | `https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip` | daily |
+| Backend ← GTFS-RT vehicles | `https://gtfs.ztp.krakow.pl/VehiclePositions_T.pb` | every 2 s |
+| Backend ← GTFS static (shapes) | `https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip` | every 24 h |
+| Client ← Backend | `GET /vehicles`, `GET /shapes` | every 2 s |
+
+Backend endpoints (`SmogWawelski.Web`):
+- `GET /vehicles` → `{ ts, count, vehicles: [{ id, name, lat, lng, heading, color, vLat, vLng, ts }] }`
+- `GET /shapes` → `[{ routeId, lineName, color, points: [[lat, lng], ...] }]`
+- `GET /health` → `{ status: "ok", ts }` (Railway healthcheck)
 
 No API key required. Data provided by [ZTP Kraków](https://gtfs.ztp.krakow.pl).
+
+---
+
+## ☁️ Deploying the backend (Railway)
+
+```bash
+# from repo root — needs Railway CLI logged in
+railway init                # create new project (or `railway link` to existing)
+railway up                  # builds via Dockerfile, deploys
+railway domain              # generates *.up.railway.app URL
+```
+
+The included [Dockerfile](Dockerfile) is a multi-stage .NET 10 build, and
+[railway.toml](railway.toml) sets the healthcheck to `/health`. Environment variables:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PORT` | `8080` | injected by Railway, do not set manually |
+| `CACHE_DIR` | `/data` | where shape JSON is cached on disk |
+
+After deploy, point the MAUI client at your Railway URL by editing
+[Services/ApiClient.cs](Services/ApiClient.cs):
+
+```csharp
+public const string DefaultBaseUrl = "https://your-app.up.railway.app";
+```
 
 ---
 

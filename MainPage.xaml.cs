@@ -2,15 +2,14 @@ using System.Text.Json;
 using SmogWawelski.Core;
 using SmogWawelski.Services;
 using SmogWawelski.ViewModels;
-using GtfsShapeService = SmogWawelski.Core.GtfsShapeService;
 
 namespace SmogWawelski;
 
 public partial class MainPage : ContentPage
 {
-    private readonly MapViewModel       _vm         = new();
-    private readonly GtfsShapeService   _shapeSvc   = new(FileSystem.AppDataDirectory);
-    private readonly ScreenCaptureService _capture  = new();
+    private readonly MapViewModel         _vm      = new();
+    private readonly ApiClient            _api     = new();
+    private readonly ScreenCaptureService _capture = new();
     private bool _mapReady;
     private bool _routesDrawn;
     private int  _recordSeconds;
@@ -86,7 +85,7 @@ public partial class MainPage : ContentPage
         if (_routesDrawn) return;
         try
         {
-            var routes = await _shapeSvc.GetRoutesAsync();
+            var routes = await _api.GetShapesAsync();
             if (routes.Count == 0) return;
             var json    = JsonSerializer.Serialize(routes);
             var escaped = json.Replace("\\","\\\\").Replace("'","\\'").Replace("\n","").Replace("\r","");

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using SmogWawelski.Core;
+using SmogWawelski.Services;
 
 namespace SmogWawelski.ViewModels;
 
@@ -17,7 +18,7 @@ public class TramRow
 
 public class MapViewModel : INotifyPropertyChanged
 {
-    private readonly TtssService _svc = new();
+    private readonly ApiClient _svc = new();
     private CancellationTokenSource _cts = new();
 
     private string _status = "Ładowanie...";
@@ -55,7 +56,7 @@ public class MapViewModel : INotifyPropertyChanged
         IsLoading = true;
         try
         {
-            var all = await _svc.GetTramsAsync(_cts.Token);
+            var all = await _svc.GetVehiclesAsync(_cts.Token);
 
             LastVehicles = string.IsNullOrWhiteSpace(FilterLine)
                 ? all

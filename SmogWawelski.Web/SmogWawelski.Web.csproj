@@ -4,6 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SmogWawelski.Web</RootNamespace>
+    <AssemblyName>SmogWawelski.Web</AssemblyName>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SmogWawelski.Core\SmogWawelski.Core.csproj" />
+  </ItemGroup>
 
 </Project>
