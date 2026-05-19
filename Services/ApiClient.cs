@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using SmogWawelski.Core;
@@ -20,9 +21,15 @@ public class ApiClient
     public ApiClient(string? baseUrl = null)
     {
         BaseUrl = (baseUrl ?? DefaultBaseUrl).TrimEnd('/');
-        _http   = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+
+        // Auto-decompression — backend gzipuje JSON; bez tego klient widzi binarne bajty
+        // i wywala "ExpectedStartOfValueNotFound" przy deserializacji.
+        var handler = new HttpClientHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+        _http   = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         _http.DefaultRequestHeaders.Add("User-Agent", "SmogWawelski-MAUI/1.0");
-        _http.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip");
     }
 
     public string LastError { get; private set; } = "";
