@@ -505,10 +505,9 @@ function updateVehicles(jsonStr) {
     vehicles[v.Id]={id:v.Id,line:v.Name,kind:kind,color:v.Color,bearing:v.Heading,
                     lat:v.Lat,lng:v.Lng,stopped:!moving};
 
-    // Trail tylko gdy:
-    //  - tramwaj w viewportcie (+30% margin)
-    //  - zoom >= 12 (przy szerszym widoku trail się zlewa w plamy, sam koszt)
-    var visForTrail = (fxTier !== 'low') && viewPad.contains([v.Lat, v.Lng]);
+    // Trail tylko na high tier (zoom >= 16) + viewport. Na średnim/niskim
+    // zoom trail-e zlewają się w długie kreski przez całą mapę = wizualny chaos.
+    var visForTrail = (fxTier === 'high') && viewPad.contains([v.Lat, v.Lng]);
     if (visForTrail && h.length>=2) upsertTrail(v.Id, h, v.Color);
     else if (!visForTrail && trailLyrs[v.Id]) removeTrail(v.Id);
 
