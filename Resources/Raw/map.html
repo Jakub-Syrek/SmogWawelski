@@ -81,6 +81,23 @@ html,body { height:100%; background:#0d1117; overflow:hidden; }
 .tm.stopped .tm-arrow { opacity:.4; }
 .tm-enter { animation:popIn .4s cubic-bezier(.34,1.56,.64,1) forwards; }
 
+/* ── Adaptive effects (lag reduction przy widoku całego miasta) ──
+   Pełne efekty na zoom >= 14 (Center daje 15). Niżej redukcja.
+   body.z-low (zoom <= 11):  brak glow/halo/shine/arrow/bar — sam dot
+   body.z-mid (zoom 12-13):  bez glow + animacji, halo statyczne
+   body.z-high (zoom >= 14): pełnia efektów (default styling) */
+body.z-low .tm-glow,
+body.z-low .tm-halo,
+body.z-low .tm-shine,
+body.z-low .tm-bar,
+body.z-low .tm-arrow { display:none; }
+body.z-low .tm-body { border-width:1.5px; box-shadow:0 2px 6px rgba(0,0,0,.6); }
+
+body.z-mid .tm-glow { display:none; }
+body.z-mid .tm-halo { animation:none; opacity:.35; }
+body.z-mid .tm-bar::after { animation:none; width:50%; }
+body.z-mid .tm-body { box-shadow:0 2px 8px rgba(0,0,0,.7), 0 0 8px color-mix(in srgb,var(--c) 40%,transparent); }
+
 /* ── Bus: okrągły marker zamiast prostokąta ────────────────── */
 .tm.bus .tm-body  { border-radius:50%; border-width:2px; }
 .tm.bus .tm-shine { border-radius:50% 50% 0 0; }
@@ -138,14 +155,63 @@ html,body { height:100%; background:#0d1117; overflow:hidden; }
 <div id="map"></div>
 <script>
 // ── Map ────────────────────────────────────────────────────────
+// Wolniejszy + płynniejszy zoom (snap 0.25, delta 0.5, dłuższy debounce
+// wheela, większy threshold animacji — gwałtowne skoki są rzadsze).
 var map = L.map('map', {
   zoomControl:true, preferCanvas:false,  // SVG renderer dla animacji trail
-  zoomAnimation:true, fadeAnimation:true
-}).setView([50.0614,19.9366],13);
+  zoomAnimation:true, fadeAnimation:true,
+  zoomSnap: 0.25,                   // pozwala "ułamkowe" zoomy → płynniejsze pinch
+  zoomDelta: 0.5,                   // przyciski +/- zoomują o 0.5 zamiast 1
+  wheelDebounceTime: 80,            // (default 40) większy = mniej twitchy
+  wheelPxPerZoomLevel: 120,         // (default 60) trzeba kręcić dłużej dla 1 levelu
+  zoomAnimationThreshold: 8,        // animuj nawet większe skoki zamiast snapować
+  inertia: true,
+  inertiaDeceleration: 2000,
+  bounceAtZoomLimits: false,
+  touchZoom: 'center'               // pinch zoomuje do środka ekranu — stabilniej
+}).setView([50.0614,19.9366],16);
 
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   attribution:'© OSM © CARTO', subdomains:'abcd', maxZoom:19
 }).addTo(map);
+
+// ── Adaptive effect tier zależny od zoomu ──────────────────────
+// Default zoom = 16 (Center). Agresywna redukcja przy oddalaniu:
+// >=16 pełnia, 14-15 średnia, <=13 minimalna.
+var fxTier = 'high';
+var routesVisible = true;
+function updateFxTier() {
+  var z = map.getZoom();
+  var tier = z >= 16 ? 'high' : z >= 14 ? 'mid' : 'low';
+  if (tier === fxTier) return;
+  fxTier = tier;
+  document.body.classList.remove('z-low','z-mid','z-high');
+  document.body.classList.add('z-' + tier);
+  // Przy niskim/średnim zoomie usuń wszystkie trail-e — żaden się nie zlewa wizualnie
+  if (tier !== 'high') {
+    Object.keys(trailLyrs).forEach(removeTrail);
+  }
+  // GTFS route shapes (stała sieć torów) — pokazuj tylko na high zoom.
+  // Na widoku miasta to setki nakładających się linii = wizualny chaos.
+  var shouldShowRoutes = (tier === 'high');
+  if (shouldShowRoutes !== routesVisible && typeof routeLayerGroup !== 'undefined') {
+    if (shouldShowRoutes) map.addLayer(routeLayerGroup);
+    else                  map.removeLayer(routeLayerGroup);
+    routesVisible = shouldShowRoutes;
+  }
+}
+// Debounce — przy zoomSnap 0.25 i pinch może być seria zoomend. Czekaj 200ms po ostatnim.
+var fxDebounceTimer = null;
+map.on('zoomend', function(){
+  clearTimeout(fxDebounceTimer);
+  fxDebounceTimer = setTimeout(updateFxTier, 200);
+});
+// Initial tier zgodnie z aktualnym zoomem (default = 16 → high)
+(function(){
+  var z = map.getZoom();
+  fxTier = z >= 16 ? 'high' : z >= 14 ? 'mid' : 'low';
+  document.body.classList.add('z-' + fxTier);
+})();
 
 // Wstrzyknij CSS animacji do SVG Leaflet po załadowaniu
 map.on('layeradd', injectSvgCSS);
@@ -340,9 +406,10 @@ function predict(tg, nowMs) {
 
 function animLoop(){
   var now = performance.now();
-  // Throttle do ~30fps — WebView na Androidzie i tak nie wyrabia 60 przy 200 markerach,
-  // a kosztowne operacje (setLatLng, DOM writes) są wtedy odpalane o połowę rzadziej.
-  if (now - lastAnimT < FRAME_MIN_MS) { requestAnimationFrame(animLoop); return; }
+  // Throttle zależny od zoomu: full speed (30fps) przy zbliżeniu, połowa (15fps)
+  // przy widoku całego miasta — przy 500+ pojazdach setLatLng + bearings to bottleneck.
+  var minMs = fxTier === 'low' ? 66 : fxTier === 'mid' ? 50 : FRAME_MIN_MS;
+  if (now - lastAnimT < minMs) { requestAnimationFrame(animLoop); return; }
   lastAnimT = now;
 
   var nowMs = Date.now();
@@ -438,9 +505,10 @@ function updateVehicles(jsonStr) {
     vehicles[v.Id]={id:v.Id,line:v.Name,kind:kind,color:v.Color,bearing:v.Heading,
                     lat:v.Lat,lng:v.Lng,stopped:!moving};
 
-    // Trail rysuj tylko jeśli tramwaj jest w/blisko viewportu — to oszczędza
-    // setLatLngs+setStyle na 9 polylines × N off-screen pojazdów = duża wygrana CPU.
-    var visForTrail = viewPad.contains([v.Lat, v.Lng]);
+    // Trail tylko gdy:
+    //  - tramwaj w viewportcie (+30% margin)
+    //  - zoom >= 12 (przy szerszym widoku trail się zlewa w plamy, sam koszt)
+    var visForTrail = (fxTier !== 'low') && viewPad.contains([v.Lat, v.Lng]);
     if (visForTrail && h.length>=2) upsertTrail(v.Id, h, v.Color);
     else if (!visForTrail && trailLyrs[v.Id]) removeTrail(v.Id);
 
@@ -573,8 +641,8 @@ function centerOnUser(lat, lng) {
   } else {
     userMarker.setLatLng([lat, lng]);
   }
-  // Zoom 15 — widać ulice i sąsiednie tramwaje, ale bez "klaustrofobii"
-  map.flyTo([lat, lng], 15, { duration: 0.8 });
+  // Zoom 16 — pełne efekty, widać ulice i poszczególne pojazdy
+  map.flyTo([lat, lng], 16, { duration: 0.8 });
 }
 
 // ── Focus ──────────────────────────────────────────────────────

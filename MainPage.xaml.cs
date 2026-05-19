@@ -192,7 +192,7 @@ public partial class MainPage : ContentPage
         // Fallback — środek Krakowa
         await MainThread.InvokeOnMainThreadAsync(async () =>
         {
-            try { await MapView.EvaluateJavaScriptAsync("map.setView([50.0614,19.9366],14,{animate:true,duration:0.6});"); }
+            try { await MapView.EvaluateJavaScriptAsync("map.setView([50.0614,19.9366],16,{animate:true,duration:0.6});"); }
             catch { }
         });
     }
