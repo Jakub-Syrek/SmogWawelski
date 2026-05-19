@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'   # Trigger: git tag v1.0.0 && git push --tags
 
+permissions:
+  contents: write   # potrzebne do gh-release create
+
 jobs:
   android-apk:
     name: Build & Publish APK
