@@ -9,8 +9,10 @@ public class TtssService
     private const string TramFeed   = "https://gtfs.ztp.krakow.pl/VehiclePositions_T.pb";
     private const string GtfsStatic = "https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip";
 
-    // trip_id → route_id (numer linii)
+    // trip_id → route_id (z trips.txt)
     private Dictionary<string, string> _tripToRoute = [];
+    // route_id → route_short_name (publiczny numer linii z routes.txt — np. "route_31" -> "1")
+    private Dictionary<string, string> _routeIdToShortName = [];
     private DateTime _routesCachedAt = DateTime.MinValue;
 
     // Stan do wyliczania prędkości per pojazd (dead-reckoning na froncie).
@@ -65,7 +67,15 @@ public class TtssService
                     if (string.IsNullOrEmpty(routeId) && !string.IsNullOrEmpty(v.TripId))
                         _tripToRoute.TryGetValue(v.TripId, out routeId);
 
-                    var line = NormalizeLine(routeId ?? v.Label ?? "?");
+                    // Preferuj route_short_name z routes.txt (publiczny numer linii).
+                    // Fallback: znormalizowane route_id (gdy mapowanie nie załadowane), potem label.
+                    string? shortName = null;
+                    if (!string.IsNullOrEmpty(routeId))
+                        _routeIdToShortName.TryGetValue(routeId, out shortName);
+
+                    var line = !string.IsNullOrEmpty(shortName)
+                        ? shortName
+                        : NormalizeLine(routeId ?? v.Label ?? "?");
                     var id   = v.EntityId.Length > 0 ? v.EntityId : v.VehicleId;
 
                     UpdateVelocity(id, v.Latitude, v.Longitude, now, out var vlat, out var vlng);
@@ -120,6 +130,31 @@ public class TtssService
             var zipBytes = await _http.GetByteArrayAsync(GtfsStatic, ct);
             using var zip = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read);
 
+            // routes.txt → route_id → route_short_name (publiczny numer linii)
+            // ZTP używa wewnętrznych route_id jak "route_31" — public-facing line może być "1".
+            var routesEntry = zip.GetEntry("routes.txt");
+            if (routesEntry != null)
+            {
+                using var rdr = new StreamReader(routesEntry.Open());
+                var hdr = (await rdr.ReadLineAsync(ct) ?? "").Split(',');
+                int ridx = Array.IndexOf(hdr, "route_id");
+                int snidx = Array.IndexOf(hdr, "route_short_name");
+                if (ridx >= 0 && snidx >= 0)
+                {
+                    var rmap = new Dictionary<string, string>(64);
+                    string? rl;
+                    while ((rl = await rdr.ReadLineAsync(ct)) != null)
+                    {
+                        var p = rl.Split(',');
+                        if (p.Length > Math.Max(ridx, snidx))
+                            rmap[p[ridx].Trim('"')] = p[snidx].Trim('"');
+                    }
+                    _routeIdToShortName = rmap;
+                    Console.WriteLine($"[GTFS] Załadowano {rmap.Count} mapowań route_id→short_name");
+                }
+            }
+
+            // trips.txt → trip_id → route_id
             var tripsEntry = zip.GetEntry("trips.txt");
             if (tripsEntry == null) return;
 
