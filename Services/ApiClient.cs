@@ -10,9 +10,8 @@ namespace SmogWawelski.Services;
 /// </summary>
 public class ApiClient
 {
-    // Zmień po deployu na Railway: https://&lt;your-app&gt;.up.railway.app
-    // Można też nadpisać przez plik konfiguracyjny lub MAUI Preferences (TODO).
-    public const string DefaultBaseUrl = "https://smogwawelski.up.railway.app";
+    // Production backend on Railway.
+    public const string DefaultBaseUrl = "https://smogwawelski-production.up.railway.app";
 
     private readonly HttpClient _http;
 
