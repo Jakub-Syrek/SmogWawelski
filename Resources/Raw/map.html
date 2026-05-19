@@ -81,6 +81,13 @@ html,body { height:100%; background:#0d1117; overflow:hidden; }
 .tm.stopped .tm-arrow { opacity:.4; }
 .tm-enter { animation:popIn .4s cubic-bezier(.34,1.56,.64,1) forwards; }
 
+/* ── Bus: okrągły marker zamiast prostokąta ────────────────── */
+.tm.bus .tm-body  { border-radius:50%; border-width:2px; }
+.tm.bus .tm-shine { border-radius:50% 50% 0 0; }
+.tm.bus .tm-bar   { display:none; } /* okrągły body nie znosi paska */
+.tm.bus .tm-halo  { border-radius:50%; }
+.tm.bus .tm-line  { letter-spacing:-0.5px; }
+
 @keyframes glowPulse  { 0%,100%{opacity:.45;transform:scale(1)}  50%{opacity:.85;transform:scale(1.2)} }
 @keyframes haloPulse  { 0%,100%{opacity:.3;transform:scale(1)}   50%{opacity:.7;transform:scale(1.1)} }
 @keyframes speedBar   { 0%{width:15%} 50%{width:88%} 100%{width:15%} }
@@ -250,12 +257,13 @@ function removeTrail(id) {
 // ── Marker icon ────────────────────────────────────────────────
 // Klucz "ikony": jeśli się nie zmienia, NIE wołamy setIcon (drogie — rebuild DOM).
 // Rotację strzałki i klasę stopped robimy bezpośrednio na cached DOM (mArr/mEl).
-function iconKeyFor(v) { return v.line + '|' + v.color; }
+function iconKeyFor(v) { return (v.kind || 'tram') + '|' + v.line + '|' + v.color; }
 
 function makeIcon(v, enter) {
+  var isBus = (v.kind === 'bus');
   var sz = v.line.length > 2 ? 40 : 38;
   var fs = v.line.length > 2 ? 10 : 13;
-  var cls = 'tm' + (enter ? ' tm-enter' : '');
+  var cls = 'tm' + (enter ? ' tm-enter' : '') + (isBus ? ' bus' : '');
   return L.divIcon({
     className:'',
     html:'<div class="'+cls+'" style="--c:'+v.color+';width:'+sz+'px;height:'+sz+'px">'+
@@ -296,8 +304,10 @@ function applyStopped(id, stopped) {
 }
 
 function makePopup(v) {
+  var emoji = (v.kind === 'bus') ? '🚌' : '🚋';
+  var typ   = (v.kind === 'bus') ? 'autobus' : 'tramwaj';
   return '<div class="popup-title">'+v.line+
-         '<span class="popup-chip" style="background:'+v.color+'">🚋 linia</span></div>'+
+         '<span class="popup-chip" style="background:'+v.color+'">'+emoji+' '+typ+'</span></div>'+
          '<div class="popup-info">'+
          '📍 '+v.lat.toFixed(5)+', '+v.lng.toFixed(5)+'<br>'+
          '🧭 '+Math.round(v.bearing||0)+'° &nbsp;|&nbsp; ID: '+v.id+
@@ -424,7 +434,8 @@ function updateVehicles(jsonStr) {
     }
 
     var prevVeh = vehicles[v.Id];
-    vehicles[v.Id]={id:v.Id,line:v.Name,color:v.Color,bearing:v.Heading,
+    var kind = v.Kind || 'tram';
+    vehicles[v.Id]={id:v.Id,line:v.Name,kind:kind,color:v.Color,bearing:v.Heading,
                     lat:v.Lat,lng:v.Lng,stopped:!moving};
 
     // Trail rysuj tylko jeśli tramwaj jest w/blisko viewportu — to oszczędza

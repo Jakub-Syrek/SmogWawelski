@@ -6,7 +6,8 @@ namespace SmogWawelski.Core;
 public class TtssVehicle
 {
     public string Id      { get; set; } = "";
-    public string Name    { get; set; } = "";   // numer linii
+    public string Name    { get; set; } = "";   // numer linii (publiczny)
+    public string Kind    { get; set; } = "tram"; // "tram" | "bus"
     public float  Lat_f   { get; set; }         // surowe z protobuf
     public float  Lng_f   { get; set; }
     public int    Heading { get; set; }

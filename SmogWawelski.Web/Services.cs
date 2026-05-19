@@ -34,29 +34,38 @@ public sealed class ShapesCache
 }
 
 /// <summary>
-/// Background service — odpytuje ZTP GTFS-RT co 2s i aktualizuje VehicleStore.
-/// Stan velocity trzymany jest w TtssService (singleton).
+/// Background service — odpytuje ZTP GTFS-RT (tramwaje + autobusy) co 2s
+/// równolegle i mergeuje do jednego VehicleStore. Każda usługa trzyma własny stan velocity.
 /// </summary>
 public sealed class VehicleRefreshService : BackgroundService
 {
-    private readonly TtssService _svc;
+    private readonly TtssService _tram;
+    private readonly TtssService _bus;
     private readonly VehicleStore _store;
     private readonly ILogger<VehicleRefreshService> _log;
 
-    public VehicleRefreshService(TtssService svc, VehicleStore store, ILogger<VehicleRefreshService> log)
+    public VehicleRefreshService(VehicleStore store, ILogger<VehicleRefreshService> log)
     {
-        _svc = svc; _store = store; _log = log;
+        _store = store; _log = log;
+        _tram = new TtssService(TtssService.TramFeed, TtssService.TramStatic, "tram");
+        _bus  = new TtssService(TtssService.BusFeed,  TtssService.BusStatic,  "bus");
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        _log.LogInformation("VehicleRefreshService started");
+        _log.LogInformation("VehicleRefreshService started (tram + bus)");
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                var vehicles = await _svc.GetTramsAsync(ct);
-                _store.Update(vehicles);
+                var tTask = _tram.GetTramsAsync(ct);
+                var bTask = _bus.GetTramsAsync(ct);
+                await Task.WhenAll(tTask, bTask);
+
+                var merged = new List<TtssVehicle>(tTask.Result.Count + bTask.Result.Count);
+                merged.AddRange(tTask.Result);
+                merged.AddRange(bTask.Result);
+                _store.Update(merged);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)

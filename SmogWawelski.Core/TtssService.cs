@@ -6,8 +6,14 @@ namespace SmogWawelski.Core;
 public class TtssService
 {
     private readonly HttpClient _http;
-    private const string TramFeed   = "https://gtfs.ztp.krakow.pl/VehiclePositions_T.pb";
-    private const string GtfsStatic = "https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip";
+    private readonly string _rtFeed;
+    private readonly string _staticFeed;
+    private readonly string _kind;
+
+    public const string TramFeed   = "https://gtfs.ztp.krakow.pl/VehiclePositions_T.pb";
+    public const string TramStatic = "https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip";
+    public const string BusFeed    = "https://gtfs.ztp.krakow.pl/VehiclePositions_A.pb";
+    public const string BusStatic  = "https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip";
 
     // trip_id → route_id (z trips.txt)
     private Dictionary<string, string> _tripToRoute = [];
@@ -41,8 +47,11 @@ public class TtssService
     // gubiąc historię pozycji, velocity i trail (efekt: "skoki" widoczne na mapie).
     private List<TtssVehicle> _lastGood = [];
 
-    public TtssService()
+    public TtssService(string? rtFeedUrl = null, string? staticUrl = null, string kind = "tram")
     {
+        _rtFeed     = rtFeedUrl  ?? TramFeed;
+        _staticFeed = staticUrl  ?? TramStatic;
+        _kind       = kind;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
         _http.DefaultRequestHeaders.Add("User-Agent", "SmogWawelski/1.0");
     }
@@ -55,7 +64,7 @@ public class TtssService
             if ((DateTime.Now - _routesCachedAt).TotalHours > 24)
                 await RefreshTripMappingAsync(ct);
 
-            var bytes = await _http.GetByteArrayAsync(TramFeed, ct);
+            var bytes = await _http.GetByteArrayAsync(_rtFeed, ct);
             var raw   = GtfsRtParser.Parse(bytes);
             var now   = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -84,6 +93,7 @@ public class TtssService
                     {
                         Id      = id,
                         Name    = line,
+                        Kind    = _kind,
                         Lat_f   = v.Latitude,
                         Lng_f   = v.Longitude,
                         Heading = (int)v.Bearing,
@@ -110,7 +120,7 @@ public class TtssService
             _lastGood = result;
 
             LastError = "";
-            Console.WriteLine($"[GTFS-RT] {result.Count} tramwajów (raw={raw.Count})");
+            Console.WriteLine($"[GTFS-RT {_kind}] {result.Count} pojazdów (raw={raw.Count})");
             return result;
         }
         catch (Exception ex)
@@ -126,8 +136,8 @@ public class TtssService
     {
         try
         {
-            Console.WriteLine("[GTFS] Pobieranie GTFS_KRK_T.zip...");
-            var zipBytes = await _http.GetByteArrayAsync(GtfsStatic, ct);
+            Console.WriteLine($"[GTFS {_kind}] Pobieranie {_staticFeed}...");
+            var zipBytes = await _http.GetByteArrayAsync(_staticFeed, ct);
             using var zip = new ZipArchive(new MemoryStream(zipBytes), ZipArchiveMode.Read);
 
             // routes.txt → route_id → route_short_name (publiczny numer linii)

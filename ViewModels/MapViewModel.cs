@@ -10,10 +10,11 @@ namespace SmogWawelski.ViewModels;
 public class TramRow
 {
     public string Line      { get; set; } = "";
+    public string Kind      { get; set; } = "tram";
     public string Color     { get; set; } = "#E20D19";
     public string ColorDark { get; set; } = "#8B0000";
     public int    Count     { get; set; }
-    public string Badge     => Count > 0 ? $"{Count} 🚋" : "";
+    public string Badge     => Count > 0 ? $"{Count} {(Kind == "bus" ? "🚌" : "🚋")}" : "";
 }
 
 public class MapViewModel : INotifyPropertyChanged
@@ -62,13 +63,15 @@ public class MapViewModel : INotifyPropertyChanged
                 ? all
                 : all.Where(v => v.Name == FilterLine).ToList();
 
-            // Aktualizuj listę linii
+            // Grupuj po (Kind, Name) — tram i bus mogą mieć tę samą cyfrę
             var grouped = all
-                .GroupBy(v => v.Name)
-                .OrderBy(g => g.Key.PadLeft(3, '0'))
+                .GroupBy(v => (v.Kind, v.Name))
+                .OrderBy(g => g.Key.Kind == "tram" ? 0 : 1)
+                .ThenBy(g => g.Key.Name.PadLeft(4, '0'))
                 .Select(g => new TramRow
                 {
-                    Line      = g.Key,
+                    Line      = g.Key.Name,
+                    Kind      = g.Key.Kind,
                     Color     = g.First().Color,
                     ColorDark = DarkenHex(g.First().Color),
                     Count     = g.Count()

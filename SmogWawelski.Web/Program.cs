@@ -5,8 +5,8 @@ using SmogWawelski.Web;
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Services ──────────────────────────────────────────────────────
-// Singletony — TtssService trzyma stan velocity per pojazd, GtfsShapeService cache na dysku.
-builder.Services.AddSingleton<TtssService>();
+// VehicleRefreshService tworzy własne TtssService (tram + bus) — każda instancja
+// ma swój stan velocity. GtfsShapeService osobny, cache na dysku.
 builder.Services.AddSingleton(_ =>
 {
     var cacheDir = builder.Configuration["CACHE_DIR"]
@@ -60,6 +60,7 @@ app.MapGet("/vehicles", (VehicleStore store) =>
         {
             id       = v.Id,
             name     = v.Name,
+            kind     = v.Kind,
             lat      = v.Lat,
             lng      = v.Lng,
             heading  = v.Heading,

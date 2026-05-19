@@ -48,6 +48,7 @@ public class ApiClient
                 {
                     Id      = v.Id,
                     Name    = v.Name,
+                    Kind    = v.Kind ?? "tram",
                     Lat_f   = (float)v.Lat,
                     Lng_f   = (float)v.Lng,
                     Heading = v.Heading,
@@ -93,6 +94,7 @@ public class ApiClient
     {
         [JsonPropertyName("id")]      public string Id { get; set; } = "";
         [JsonPropertyName("name")]    public string Name { get; set; } = "";
+        [JsonPropertyName("kind")]    public string? Kind { get; set; }
         [JsonPropertyName("lat")]     public double Lat { get; set; }
         [JsonPropertyName("lng")]     public double Lng { get; set; }
         [JsonPropertyName("heading")] public int Heading { get; set; }

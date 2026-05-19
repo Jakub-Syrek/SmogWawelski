@@ -102,7 +102,7 @@ public partial class MainPage : ContentPage
     {
         if (!_mapReady) return;
         var payload = JsonSerializer.Serialize(vehicles.Select(v => new
-            { v.Id, v.Name, v.Lat, v.Lng, v.Color, Heading = v.Heading,
+            { v.Id, v.Name, v.Kind, v.Lat, v.Lng, v.Color, Heading = v.Heading,
               VLat = v.VLat, VLng = v.VLng, Ts = v.Ts }));
         var escaped = payload.Replace("\\","\\\\").Replace("'","\\'").Replace("\n","").Replace("\r","");
         await MainThread.InvokeOnMainThreadAsync(async () =>
